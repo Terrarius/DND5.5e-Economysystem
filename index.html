@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+html_code = '''<!DOCTYPE html>
 <html lang="de">
 <head>
     <meta charset="UTF-8">
@@ -56,7 +56,7 @@ const FIREBASE_CONFIG = {
 
 const FIREBASE_ROOT = "dnd55/state";
 const FIREBASE_ENABLED = !!FIREBASE_CONFIG.databaseURL;
-const SYNC_KEYS = ["characters", "shopTabs", "logs", "pendingRequests", "standard"];
+const SYNC_KEYS = ["characters", "shopTabs", "logs", "pendingRequests", "standard", "campaignMeta"];
 const SYNC_NORMALIZERS = {
   characters: (v) => (v || []).map((c) => ({
     ...c,
@@ -66,7 +66,13 @@ const SYNC_NORMALIZERS = {
   shopTabs: (v) => (v || []).map((t) => ({ ...t, items: t.items || [] })),
   logs: (v) => v || [],
   pendingRequests: (v) => v || [],
-  standard: (v) => v || "silver"
+  standard: (v) => v || "silver",
+  campaignMeta: (v) => ({
+    campaignName: "D&D 5.5e Kampagne",
+    currentDate: "1. Hammer, 1492 TZ",
+    sessionNumber: 1,
+    ...(v || {})
+  })
 };
 const cleanForDb = (v) => JSON.parse(JSON.stringify(v === void 0 ? null : v));
 
@@ -125,6 +131,7 @@ const ScrollText = makeIcon("ScrollText", "Scroll");
 const BookOpen = makeIcon("BookOpen", "Users");
 const Hammer = makeIcon("Hammer", "Wrench");
 const Bell = makeIcon("Bell");
+const Settings = makeIcon("Settings", "Sliders");
 
 const CAMPAIGN_TABS = [
   { id: "finances", label: "Finanzen & Shops", Icon: Coins },
@@ -139,56 +146,92 @@ const CAMPAIGN_TABS = [
 const PLACEHOLDER_INFO = {
   inventory: {
     title: "Inventar, Traglast & Magische Einstimmung (Attunement)",
-    subtitle: "Geplantes Modul für D&D 5.5e (2024 PHB)",
-    points: [
-      "Traglast-Berechnung basierend auf Stärke (inkl. Münzgewicht & Varianten für Belastung).",
-      "Verwaltung von 3 Einstimmungs-Slots (Attunement) pro Charakter mit Schnellübersicht.",
-      "Kategorisiertes Inventar (Waffen mit Weapon Masteries, Rüstungen, Verbrauchsgüter, Schätze)."
+    playerSubtitle: "Deine persönliche Ausrüstung, Traglast & eingestimmte Gegenstände",
+    dmSubtitle: "DM-Verwaltung: Ausrüstung vergeben, Gegenstände prüfen & Einstimmungen verwalten",
+    playerPoints: [
+      "Einsicht in dein persönliches Inventar inkl. automatischer Traglast-Berechnung (Stärke & Münzgewicht).",
+      "Verwaltung deiner 3 Einstimmungs-Slots (Attunement) für magische Gegenstände.",
+      "Übersicht über Waffen (inkl. Weapon Masteries), Rüstungen und Verbrauchsgüter."
+    ],
+    dmPoints: [
+      "Gegenstände und Beute direkt an einzelne Spieler oder die Gruppenkasse vergeben.",
+      "Magische Gegenstände anlegen, identifizieren und Einstimmungen der Gruppe einsehen.",
+      "Traglast- und Ausrüstungs-Übersicht über alle Charaktere hinweg."
     ]
   },
   bastion: {
     title: "Bastions-Manager (D&D 5.5e / 2024 DMG)",
-    subtitle: "Geplantes Modul für Bastions-Züge & Spezialeinrichtungen",
-    points: [
-      "Verwaltung von Basiseinrichtungen & Spezialeinrichtungen (Schmiede, Arkane Studierstube, Kaserne, etc.).",
-      "Bastions-Züge (Bastion Turns) mit Befehlen (Craft, Empower, Harvest, Maintain, Recruit, Research, Trade).",
-      "Bastions-Verteidiger, Ereignis-Würfe (Bastion Events) und Bastionspunkte (BP)."
+    playerSubtitle: "Eure Bastion, Spezialeinrichtungen & Bastions-Befehle",
+    dmSubtitle: "DM-Verwaltung: Bastions-Züge auslösen, Ereignisse würfeln & Einrichtungen steuern",
+    playerPoints: [
+      "Übersicht über eure Basiseinrichtungen und Spezialeinrichtungen (Schmiede, Bibliothek, Kaserne, etc.).",
+      "Befehle für den aktuellen Bastions-Zug (Craft, Empower, Harvest, Maintain, Recruit, Research, Trade) einreichen.",
+      "Einsicht in Bastions-Verteidiger und gesammelte Bastionspunkte (BP)."
+    ],
+    dmPoints: [
+      "Bastions-Züge (Bastion Turns) für die Gruppe starten und Spieler-Befehle auswerten.",
+      "Bastions-Ereignisse (Bastion Events) auslösen und Ergebnisse protokollieren.",
+      "Neue Einrichtungen freischalten, Stufen anpassen und Verteidiger verwalten."
     ]
   },
   factions: {
     title: "Ruf- und Fraktionssystem",
-    subtitle: "Geplantes Modul für Ansehen (Renown) & politische Beziehungen",
-    points: [
-      "Übersicht aller Gilden, Adelshäuser, Orden und Reiche der Kampagne.",
-      "Ansehenspunkte (Renown Score) pro Charakter oder für die gesamte Gruppe.",
-      "Freigeschaltete Ränge, Privilegien, Rabatte und rivalisierende Fraktionen."
+    playerSubtitle: "Dein Ansehen (Renown) bei Gilden, Orden und Adelshäusern",
+    dmSubtitle: "DM-Verwaltung: Fraktionen pflegen & Ansehenspunkte (Renown) vergeben",
+    playerPoints: [
+      "Übersicht aller bekannten Fraktionen, Gilden und Reiche der Kampagne.",
+      "Dein aktueller Renown-Rang sowie freigeschaltete Privilegien und Händler-Rabatte.",
+      "Beziehungsstatus (Verbündet, Neutral, Rivalisierend, Feindlich)."
+    ],
+    dmPoints: [
+      "Neue Fraktionen anlegen, Ränge definieren und geheime Fraktionen für Spieler ausblenden.",
+      "Ansehenspunkte (Renown) für einzelne Charaktere oder die ganze Gruppe anpassen.",
+      "Fraktions-Notizen und diplomatische Entwicklungen festhalten."
     ]
   },
   quests: {
     title: "Quest Log",
-    subtitle: "Geplantes Modul für Haupt- & Nebenaufträge",
-    points: [
-      "Strukturierte Übersicht nach Status (Aktiv, Abgeschlossen, Gescheitert, Gerüchte).",
-      "Verknüpfung mit Auftraggebern, Zielorten und versprochenen Belohnungen.",
-      "Geteilte Gruppen-Notizen sowie geheime DM-Notizen pro Quest."
+    playerSubtitle: "Aktive Aufträge, Hauptziele & gesammelte Hinweise",
+    dmSubtitle: "DM-Verwaltung: Quests erstellen, Status aktualisieren & Belohnungen verknüpfen",
+    playerPoints: [
+      "Übersicht aller aktiven, abgeschlossenen und gescheiterten Quests.",
+      "Details zu Auftraggebern, Zielorten und Teilzielen.",
+      "Gemeinsames Gruppen-Notizfeld für eigene Ermittlungen."
+    ],
+    dmPoints: [
+      "Neue Quests und Gerüchte anlegen, freischalten oder als abgeschlossen markieren.",
+      "Geheime DM-Notizen und Hintergründe hinterlegen, die nur für den Spielleiter sichtbar sind.",
+      "Quest-Belohnungen (Gold, Ruf, Items) direkt vorbereiten."
     ]
   },
   lore: {
     title: "NPC- und Ortslexikon",
-    subtitle: "Geplantes Modul für Kampagnenwissen & Begegnungen",
-    points: [
-      "Durchsuchbare Datenbank bekannter Nichtspielercharaktere (Gesinnung, Fraktion, Status, Notizen).",
-      "Ortsregister mit Regionen, Städten, Tavernen und wichtigen Schauplätzen.",
-      "Sichtbarkeits-Steuerung durch den DM (für Spieler freigegeben vs. nur DM)."
+    playerSubtitle: "Bekannte Persönlichkeiten, Städte und Schauplätze",
+    dmSubtitle: "DM-Verwaltung: NPCs & Orte anlegen und Sichtbarkeit für Spieler steuern",
+    playerPoints: [
+      "Durchsuchbares Register aller bisher begegneten NPCs (Name, Rolle, Fraktion, Status).",
+      "Ortslexikon mit Regionen, Städten, Tavernen und wichtigen Punkten.",
+      "Freigegebene Beschreibungen und eigene Spieler-Notizen."
+    ],
+    dmPoints: [
+      "NPCs und Orte anlegen und per Klick für Spieler freigeben oder geheim halten.",
+      "Verdeckte DM-Informationen (Motivationen, Geheimnisse, Status) verwalten.",
+      "Verknüpfung von NPCs mit Orten, Quests und Fraktionen."
     ]
   },
   downtime: {
     title: "Downtime- und Crafting-Tracker",
-    subtitle: "Geplantes Modul für Auszeiten & Herstellung nach 2024 PHB/DMG",
-    points: [
-      "Herstellung von Tränken (Heiltränke per Kräuterkunde-Set), Schriftrollen & nicht-magischer Ausrüstung.",
-      "Verzauberung magischer Gegenstände nach Seltenheit (Tage- & Goldkosten-Tracker).",
-      "Fortschrittsbalken für Recherche, Training und andere Downtime-Aktivitäten."
+    playerSubtitle: "Deine Auszeit-Projekte, Trankbrauen & Gegenstandsherstellung",
+    dmSubtitle: "DM-Verwaltung: Downtime-Tage vergeben & Crafting-Projekte genehmigen",
+    playerPoints: [
+      "Laufende Crafting-Projekte (Tränke, Schriftrollen, Waffen, Verzauberungen nach 2024 Regeln) verfolgen.",
+      "Fortschrittsbalken für investierte Downtime-Tage und Goldkosten.",
+      "Neue Auszeit-Aktivitäten (Recherche, Training, Herstellung) starten."
+    ],
+    dmPoints: [
+      "Downtime-Tage an einzelne Charaktere oder die gesamte Gruppe vergeben.",
+      "Crafting-Anfragen der Spieler prüfen, SG festlegen und Fortschritte absegnen.",
+      "Rezepte und Voraussetzungen für besondere Gegenstände verwalten."
     ]
   }
 };
@@ -328,12 +371,6 @@ function copperToCoins(totalCp) {
   const cp = rem;
   return { pp, gp, sp, cp };
 }
-function deductCopperFromCoins(coins, costCp) {
-  const currentTotal = getTotalCopper(coins);
-  if (currentTotal < costCp) return null;
-  const newTotal = currentTotal - costCp;
-  return copperToCoins(newTotal);
-}
 function formatCurrency(totalCp, standard = "silver") {
   if (totalCp === 0) return "0 KM";
   const c = copperToCoins(totalCp);
@@ -358,9 +395,27 @@ function getCoinWeight(coins) {
 }
 
 function App() {
-  const [role, setRole] = useState("player");
+  // Authentifizierungs- & Rollen-Status VOR allen Reitern
+  // authMode: null (nicht eingeloggt) | "player" | "dm"
+  const [authMode, setAuthMode] = useState(null);
+  const [loginRoleSelect, setLoginRoleSelect] = useState("player"); // Tab im Login-Screen: "player" | "dm"
+  const [loggedInPlayerId, setLoggedInPlayerId] = useState(null);
+  const [loginNameInput, setLoginNameInput] = useState("");
+  const [loginPasswordInput, setLoginPasswordInput] = useState("");
+  const [dmPassword, setDmPassword] = useState("dm2024");
+  const [dmPasswordInput, setDmPasswordInput] = useState("");
+
+  // Haupt-Navigation (wird erst nach erfolgreichem Login angezeigt)
+  // "finances" | "inventory" | "bastion" | "factions" | "quests" | "lore" | "downtime" | "__settings" (nur DM)
   const [mainSection, setMainSection] = useState("finances");
+
+  // Globale Kampagnendaten
   const [standard, setStandard] = useState("silver");
+  const [campaignMeta, setCampaignMeta] = useState({
+    campaignName: "D&D 5.5e Kampagne",
+    currentDate: "1. Hammer, 1492 TZ",
+    sessionNumber: 1
+  });
   const [characters, setCharacters] = useState(INITIAL_CHARACTERS);
   const [activeCharId, setActiveCharId] = useState(INITIAL_CHARACTERS[1].id);
   const [shopTabs, setShopTabs] = useState(INITIAL_SHOP_TABS);
@@ -372,23 +427,17 @@ function App() {
   const dbRef = useRef(null);
   const lastSynced = useRef({});
 
-  // Auth & Navigation
-  const [dmPassword, setDmPassword] = useState("dm2024");
-  const [isDmUnlocked, setIsDmUnlocked] = useState(false);
-  const [dmPasswordInput, setDmPasswordInput] = useState("");
-  const [loggedInPlayerId, setLoggedInPlayerId] = useState(null);
-  const [loginNameInput, setLoginNameInput] = useState("");
-  const [loginPasswordInput, setLoginPasswordInput] = useState("");
+  // Gruppenkasse & Unter-Reiter
   const [isPartyUnlocked, setIsPartyUnlocked] = useState(false);
   const [partyPasswordInput, setPartyPasswordInput] = useState("");
-  const [playerTab, setPlayerTab] = useState(INITIAL_SHOP_TABS[0].id);
-  const [dmTab, setDmTab] = useState("overview");
+  const [playerFinanceTab, setPlayerFinanceTab] = useState(INITIAL_SHOP_TABS[0].id);
+  const [dmFinanceTab, setDmFinanceTab] = useState("overview");
 
   // DM Genehmigungs-Popup Steuerung
   const [dismissedPopupIds, setDismissedPopupIds] = useState({});
   const [showApprovalModal, setShowApprovalModal] = useState(false);
 
-  // Spieler-Formulare
+  // Spieler-Formulare (Finanzen)
   const [manualExpenseAmount, setManualExpenseAmount] = useState("");
   const [manualExpenseCoin, setManualExpenseCoin] = useState("sp");
   const [manualExpenseReason, setManualExpenseReason] = useState("");
@@ -401,7 +450,7 @@ function App() {
   const [lootCoinUnit, setLootCoinUnit] = useState("sp");
   const [lootDescription, setLootDescription] = useState("");
 
-  // DM-Formulare
+  // DM-Formulare (Finanzen & Allgemeine Einstellungen)
   const [dmTargetId, setDmTargetId] = useState("all");
   const [dmCustomTitle, setDmCustomTitle] = useState("");
   const [dmCustomAmount, setDmCustomAmount] = useState("");
@@ -439,18 +488,19 @@ function App() {
         if (parsed.characters) setCharacters(parsed.characters);
         if (parsed.shopTabs && parsed.shopTabs.length > 0) {
           setShopTabs(parsed.shopTabs);
-          setPlayerTab(parsed.shopTabs[0].id);
+          setPlayerFinanceTab(parsed.shopTabs[0].id);
           setSelectedShopTabId(parsed.shopTabs[0].id);
         }
         if (parsed.logs) setLogs(parsed.logs);
         if (parsed.pendingRequests) setPendingRequests(parsed.pendingRequests);
         if (parsed.standard) setStandard(parsed.standard);
+        if (parsed.campaignMeta) setCampaignMeta(parsed.campaignMeta);
         if (parsed.dmPassword) setDmPassword(parsed.dmPassword);
       }
       const params = new URLSearchParams(window.location.search);
       const playerParam = params.get("player");
       if (playerParam) {
-        setRole("player");
+        setLoginRoleSelect("player");
         setLoginNameInput(playerParam);
       }
     } catch (e) {
@@ -499,6 +549,7 @@ function App() {
         if (next.logs) setLogs(next.logs);
         if (next.pendingRequests) setPendingRequests(next.pendingRequests);
         if (next.standard) setStandard(next.standard);
+        if (next.campaignMeta) setCampaignMeta(next.campaignMeta);
       }
       setSyncStatus("live");
       setLoaded(true);
@@ -520,13 +571,13 @@ function App() {
     try {
       localStorage.setItem(
         "dnd55_economy_state_v3",
-        JSON.stringify({ characters, shopTabs, logs, pendingRequests, standard, dmPassword })
+        JSON.stringify({ characters, shopTabs, logs, pendingRequests, standard, campaignMeta, dmPassword })
       );
     } catch (e) {
       console.error("Fehler beim Speichern:", e);
     }
     if (syncStatus !== "live" || !dbRef.current) return;
-    const values = { characters, shopTabs, logs, pendingRequests, standard };
+    const values = { characters, shopTabs, logs, pendingRequests, standard, campaignMeta };
     const updates = {};
     SYNC_KEYS.forEach((k) => {
       const json = JSON.stringify(values[k]);
@@ -541,11 +592,11 @@ function App() {
         setSyncStatus("error");
       });
     }
-  }, [loaded, syncStatus, characters, shopTabs, logs, pendingRequests, standard, dmPassword]);
+  }, [loaded, syncStatus, characters, shopTabs, logs, pendingRequests, standard, campaignMeta, dmPassword]);
 
   // Automatisches Öffnen des Genehmigungs-Popups in der DM-Zentrale bei neuen Anfragen
   useEffect(() => {
-    if (role === "dm" && isDmUnlocked && pendingRequests.length > 0) {
+    if (authMode === "dm" && pendingRequests.length > 0) {
       const hasUnseen = pendingRequests.some((r) => !dismissedPopupIds[r.id]);
       if (hasUnseen) {
         setShowApprovalModal(true);
@@ -553,7 +604,7 @@ function App() {
     } else if (pendingRequests.length === 0) {
       setShowApprovalModal(false);
     }
-  }, [role, isDmUnlocked, pendingRequests, dismissedPopupIds]);
+  }, [authMode, pendingRequests, dismissedPopupIds]);
 
   const currentEditorShopTab = useMemo(
     () => shopTabs.find((t) => t.id === selectedShopTabId) || shopTabs[0],
@@ -662,7 +713,7 @@ function App() {
     notify(`Buchung „${entry.title}“ wurde rückgängig gemacht.`);
   };
 
-  // Login / Logout
+  // --- LOGIN / LOGOUT VOR ALLEN REITER-INHALTEN ---
   const handlePlayerLogin = (e) => {
     e.preventDefault();
     const query = loginNameInput.trim().toLowerCase();
@@ -683,16 +734,33 @@ function App() {
       setActiveCharId(matchedChar.id);
       setLoginPasswordInput("");
       setIsPartyUnlocked(false);
+      setAuthMode("player");
+      if (mainSection === "__settings") setMainSection("finances");
       notify(`Willkommen zurück, ${matchedChar.name}!`);
     } else {
       notify("Falsches Passwort!", "error");
     }
   };
-  const handlePlayerLogout = () => {
+
+  const handleUnlockDm = (e) => {
+    e.preventDefault();
+    if (dmPasswordInput === dmPassword) {
+      setDmPasswordInput("");
+      setAuthMode("dm");
+      notify("DM-Zentrale entsperrt.");
+    } else {
+      notify("Falsches Masterpasswort!", "error");
+    }
+  };
+
+  const handleLogoutAll = () => {
+    setAuthMode(null);
     setLoggedInPlayerId(null);
     setIsPartyUnlocked(false);
+    setMainSection("finances");
     notify("Erfolgreich abgemeldet.");
   };
+
   const handleUnlockParty = (e) => {
     e.preventDefault();
     if (!partyChar) return;
@@ -705,6 +773,7 @@ function App() {
       notify("Falsches Passwort!", "error");
     }
   };
+
   const handleCopyInviteLink = (char) => {
     try {
       const baseUrl = window.location.href.split("?")[0].split("#")[0];
@@ -715,23 +784,8 @@ function App() {
       notify(`Passwort: ${char.password || "1234"}`);
     }
   };
-  const handleUnlockDm = (e) => {
-    e.preventDefault();
-    if (dmPasswordInput === dmPassword) {
-      setIsDmUnlocked(true);
-      setDmPasswordInput("");
-      notify("DM-Zentrale entsperrt.");
-    } else {
-      notify("Falsches Masterpasswort!", "error");
-    }
-  };
-  const handleLockDm = () => {
-    setIsDmUnlocked(false);
-    setRole("player");
-    notify("DM-Zentrale gesperrt.");
-  };
 
-  // --- SPIELER-AKTIONEN (Lösen jetzt ALLE eine Genehmigungsanfrage für die DM-Zentrale aus) ---
+  // --- SPIELER-AKTIONEN (Lösen ALLE eine Genehmigungsanfrage für die DM-Zentrale aus) ---
 
   const handleManualExpense = () => {
     const val = parseInt(manualExpenseAmount, 10);
@@ -1055,7 +1109,6 @@ function App() {
         { kind: "single", charId: targetChar.id, deltaCp: -payoutCp, deltaBankNotesGp: deductGp }
       );
     } else {
-      // loot_sale oder Fallback
       const payoutCp = req.payoutCp || 0;
       setCharacters((prev) => prev.map((c) => c.id === req.charId ? {
         ...c,
@@ -1129,7 +1182,7 @@ function App() {
     setItemForm({ id: null, name: "", phbUnits: "", alwaysGold: false, isUpgrade: false, desc: "" });
   };
   const handleExportJson = () => {
-    const dataStr = JSON.stringify({ characters, shopTabs, logs, pendingRequests, standard, dmPassword }, null, 2);
+    const dataStr = JSON.stringify({ characters, shopTabs, logs, pendingRequests, standard, campaignMeta, dmPassword }, null, 2);
     const blob = new Blob([dataStr], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -1319,6 +1372,7 @@ function App() {
         setLogs(d.logs || []);
         setPendingRequests(d.pendingRequests || []);
         if (d.standard) setStandard(d.standard);
+        if (d.campaignMeta) setCampaignMeta(SYNC_NORMALIZERS.campaignMeta(d.campaignMeta));
         notify("Import erfolgreich.");
       } catch (err) {
         notify("Ungültige Datei.", "error");
@@ -1338,22 +1392,22 @@ function App() {
     notify("Alles zurückgesetzt.");
   };
 
+  // --- SPIELER FINANZ-BEREICH ---
   const SPECIAL_PLAYER_TABS = [
     { id: "__life", label: "Lebensstil" },
     { id: "__bank", label: "Bank" },
     { id: "__loot", label: "Beute verkaufen" },
     { id: "__log", label: "Protokoll" }
   ];
-  const isSpecialTab = SPECIAL_PLAYER_TABS.some((t) => t.id === playerTab);
-  const activeShopTab = isSpecialTab ? null : shopTabs.find((t) => t.id === playerTab) || shopTabs[0] || null;
-  const activeTabId = isSpecialTab ? playerTab : activeShopTab ? activeShopTab.id : null;
+  const isSpecialTab = SPECIAL_PLAYER_TABS.some((t) => t.id === playerFinanceTab);
+  const activeShopTab = isSpecialTab ? null : shopTabs.find((t) => t.id === playerFinanceTab) || shopTabs[0] || null;
+  const activeTabId = isSpecialTab ? playerFinanceTab : activeShopTab ? activeShopTab.id : null;
   const activeCash = getTotalCopper(activeChar.coins);
   const myRequests = pendingRequests.filter((r) => r.charId === activeChar.id);
   const myLogs = logs.filter((l) => l.actor === activeChar.name).slice(0, 25);
   const bankGp = parseInt(bankAmountGp, 10) || 0;
   const bankFee = bankGp > 0 ? Math.max(1, Math.ceil(bankGp * 0.03)) : 0;
 
-  // Globale Anzeige offener Genehmigungsanfragen für den aktiven Spieler
   const myRequestsBanner = myRequests.length > 0 && React.createElement(
     "div",
     { className: "bg-amber-950/25 border border-amber-500/40 rounded-2xl p-4 space-y-2" },
@@ -1375,10 +1429,10 @@ function App() {
     )
   );
 
-  const playerPanel = React.createElement("div", { className: panelBox },
+  const playerFinancePanel = React.createElement("div", { className: panelBox },
     React.createElement("div", { className: "flex flex-wrap gap-2 border-b border-slate-800 pb-3" },
-      shopTabs.map((t) => React.createElement("button", { key: t.id, onClick: () => setPlayerTab(t.id), className: tabBtn(activeTabId === t.id) }, t.name)),
-      SPECIAL_PLAYER_TABS.map((t) => React.createElement("button", { key: t.id, onClick: () => setPlayerTab(t.id), className: tabBtn(activeTabId === t.id) }, t.label))
+      shopTabs.map((t) => React.createElement("button", { key: t.id, onClick: () => setPlayerFinanceTab(t.id), className: tabBtn(activeTabId === t.id) }, t.name)),
+      SPECIAL_PLAYER_TABS.map((t) => React.createElement("button", { key: t.id, onClick: () => setPlayerFinanceTab(t.id), className: tabBtn(activeTabId === t.id) }, t.label))
     ),
     activeShopTab && React.createElement("div", { className: "space-y-4" },
       React.createElement("p", { className: "text-xs text-slate-400" }, activeShopTab.description),
@@ -1472,51 +1526,74 @@ function App() {
     )
   );
 
-  const DM_TABS = [
-    { id: "overview", label: "Übersicht" },
+  // --- DM FINANZ-BEREICH (Spezifische Verwaltung für Finanzen & Shops) ---
+  const DM_FINANCE_TABS = [
+    { id: "overview", label: "Konten & Vermögen" },
     { id: "events", label: "Ereignisse & Münzen" },
-    { id: "shops", label: "Shops" },
-    { id: "chars", label: "Charaktere" },
-    { id: "log", label: "Protokoll" }
+    { id: "shops", label: "Shops verwalten" },
+    { id: "log", label: "Finanz-Protokoll" }
   ];
   const dmTargetOptions = React.createElement(React.Fragment, null,
     React.createElement("option", { value: "all" }, "Alle Spieler (ohne Gruppenkasse)"),
     characters.map((c) => React.createElement("option", { key: c.id, value: c.id }, c.name))
   );
 
-  const dmPanel = React.createElement("div", { className: panelBox },
-    React.createElement("div", { className: "flex flex-wrap gap-2 border-b border-slate-800 pb-3" },
-      DM_TABS.map((t) => React.createElement("button", { key: t.id, onClick: () => setDmTab(t.id), className: tabBtn(dmTab === t.id) }, t.label))
+  const dmFinancePanel = React.createElement("div", { className: panelBox },
+    React.createElement("div", { className: "flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3" },
+      React.createElement("div", { className: "flex flex-wrap gap-2" },
+        DM_FINANCE_TABS.map((t) => React.createElement("button", { key: t.id, onClick: () => setDmFinanceTab(t.id), className: tabBtn(dmFinanceTab === t.id) }, t.label))
+      ),
+      React.createElement("span", { className: "text-[11px] text-slate-400" },
+        "Aktueller Standard: ", React.createElement("strong", { className: "text-amber-300" }, standard === "silver" ? "Silber-Anker" : "Gold-Standard")
+      )
     ),
-    dmTab === "overview" && React.createElement("div", { className: "space-y-4" },
+    dmFinanceTab === "overview" && React.createElement("div", { className: "space-y-5" },
       React.createElement("div", { className: "overflow-x-auto" },
         React.createElement("table", { className: "w-full text-left text-xs" },
           React.createElement("thead", null,
             React.createElement("tr", { className: "border-b border-slate-800 text-slate-400" },
               React.createElement("th", { className: "py-2" }, "Name"),
-              React.createElement("th", { className: "py-2" }, "Passwort"),
+              React.createElement("th", { className: "py-2" }, "Lebensstil"),
               React.createElement("th", { className: "py-2" }, "Bargeld"),
-              React.createElement("th", { className: "py-2" }, "Kreditbriefe"),
-              React.createElement("th", { className: "py-2 text-right" }, "Link kopieren")
+              React.createElement("th", { className: "py-2" }, "Kreditbriefe")
             )
           ),
           React.createElement("tbody", { className: "divide-y divide-slate-800" },
-            characters.map((c) => React.createElement("tr", { key: c.id },
-              React.createElement("td", { className: "py-3 font-bold" }, c.name),
-              React.createElement("td", { className: "py-3 font-mono text-amber-300" }, c.password || "1234"),
-              React.createElement("td", { className: "py-3 font-mono" }, fmt(getTotalCopper(c.coins))),
-              React.createElement("td", { className: "py-3 font-mono text-cyan-300" }, c.bankNotesGp || 0, " GM"),
-              React.createElement("td", { className: "py-3 text-right" }, !c.isParty && React.createElement("button", { onClick: () => handleCopyInviteLink(c), className: "px-2 py-1 rounded bg-emerald-900 text-emerald-200 text-xs" }, "Link"))
-            ))
+            characters.map((c) => {
+              const ls = LIFESTYLES.find((x) => x.id === c.lifestyle) || LIFESTYLES[1];
+              return React.createElement("tr", { key: c.id },
+                React.createElement("td", { className: "py-3 font-bold text-white" }, c.name),
+                React.createElement("td", { className: "py-3 text-slate-300" }, ls.name),
+                React.createElement("td", { className: "py-3 font-mono text-amber-300" }, fmt(getTotalCopper(c.coins))),
+                React.createElement("td", { className: "py-3 font-mono text-cyan-300" }, c.bankNotesGp || 0, " GM")
+              );
+            })
           )
         )
       ),
-      React.createElement("div", { className: "flex flex-wrap gap-2 pt-3 border-t border-slate-800" },
-        React.createElement("label", { className: btnGhost }, "JSON importieren", React.createElement("input", { type: "file", accept: "application/json,.json", className: "hidden", onChange: handleImportJson })),
-        React.createElement("button", { onClick: handleResetAll, className: btnDanger }, "Alles zurücksetzen")
+      React.createElement("div", { className: "space-y-3 pt-3 border-t border-slate-800" },
+        React.createElement("div", { className: "text-xs font-semibold text-slate-300" }, "Direkte Münz-, Lebensstil- & Kreditbrief-Korrektur"),
+        characters.map((c) => React.createElement("div", { key: c.id, className: "p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-3" },
+          React.createElement("div", { className: "font-bold text-sm text-white" }, c.name, " ", React.createElement("span", { className: "text-xs font-normal text-slate-400" }, "(", c.role, ")")),
+          React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-4 gap-2" },
+            COIN_META.map((m) => React.createElement("label", { key: m.key, className: "text-[11px] text-slate-400" }, m.label,
+              React.createElement("input", { type: "number", min: "0", value: c.coins[m.key] || 0, onChange: (e) => updateCharCoin(c.id, m.key, e.target.value), className: `${inp} w-full mt-1` })
+            ))
+          ),
+          React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-2 gap-2" },
+            React.createElement("label", { className: "text-[11px] text-slate-400" }, "Lebensstil",
+              React.createElement("select", { value: c.lifestyle, onChange: (e) => updateChar(c.id, { lifestyle: e.target.value }), className: `${inp} w-full mt-1` },
+                LIFESTYLES.map((l) => React.createElement("option", { key: l.id, value: l.id }, l.name))
+              )
+            ),
+            React.createElement("label", { className: "text-[11px] text-slate-400" }, "Kreditbriefe (GM)",
+              React.createElement("input", { type: "number", min: "0", value: c.bankNotesGp || 0, onChange: (e) => updateChar(c.id, { bankNotesGp: Math.max(0, parseInt(e.target.value, 10) || 0) }), className: `${inp} w-full mt-1` })
+            )
+          )
+        ))
       )
     ),
-    dmTab === "events" && React.createElement("div", { className: "space-y-5" },
+    dmFinanceTab === "events" && React.createElement("div", { className: "space-y-5" },
       React.createElement("label", { className: "text-xs text-slate-400 block" }, "Ziel",
         React.createElement("select", { value: dmTargetId, onChange: (e) => setDmTargetId(e.target.value), className: `${inp} w-full sm:w-80 mt-1 block` }, dmTargetOptions)
       ),
@@ -1525,7 +1602,7 @@ function App() {
         React.createElement("button", { onClick: handleDistributeParty, className: btnGhost }, "Gruppenkasse gleichmäßig verteilen")
       ),
       React.createElement("form", { onSubmit: handleCustomEvent, className: "p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-3" },
-        React.createElement("div", { className: "text-xs font-semibold text-slate-300" }, "Eigenes Ereignis"),
+        React.createElement("div", { className: "text-xs font-semibold text-slate-300" }, "Eigenes Ereignis (Belohnung / Abzug)"),
         React.createElement("div", { className: "flex flex-wrap gap-2" },
           React.createElement("input", { type: "text", placeholder: "Titel (z.B. Questbelohnung)", value: dmCustomTitle, onChange: (e) => setDmCustomTitle(e.target.value), className: `${inp} flex-1 min-w-[12rem]` }),
           React.createElement("select", { value: dmCustomMode, onChange: (e) => setDmCustomMode(e.target.value), className: inp },
@@ -1538,17 +1615,17 @@ function App() {
         React.createElement("button", { type: "submit", className: btnPrimary }, "Anwenden")
       )
     ),
-    dmTab === "shops" && currentEditorShopTab && React.createElement("div", { className: "space-y-5" },
+    dmFinanceTab === "shops" && currentEditorShopTab && React.createElement("div", { className: "space-y-5" },
       React.createElement("div", { className: "flex flex-wrap gap-2" },
         shopTabs.map((t) => React.createElement("button", { key: t.id, onClick: () => { setSelectedShopTabId(t.id); resetItemForm(); }, className: tabBtn(currentEditorShopTab.id === t.id) }, t.name))
       ),
       React.createElement("div", { className: "p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-3" },
-        React.createElement("div", { className: "text-xs font-semibold text-slate-300" }, "Reiter bearbeiten"),
-        React.createElement("input", { type: "text", placeholder: "Name des Reiters", value: editingTabName, onChange: (e) => setEditingTabName(e.target.value), className: `${inp} w-full` }),
+        React.createElement("div", { className: "text-xs font-semibold text-slate-300" }, "Shop-Kategorie bearbeiten"),
+        React.createElement("input", { type: "text", placeholder: "Name der Kategorie", value: editingTabName, onChange: (e) => setEditingTabName(e.target.value), className: `${inp} w-full` }),
         React.createElement("input", { type: "text", placeholder: "Beschreibung", value: editingTabDesc, onChange: (e) => setEditingTabDesc(e.target.value), className: `${inp} w-full` }),
         React.createElement("div", { className: "flex gap-2" },
-          React.createElement("button", { onClick: handleUpdateShopTab, className: btnPrimary }, "Reiter speichern"),
-          React.createElement("button", { onClick: handleDeleteShopTab, className: btnDanger }, "Reiter löschen")
+          React.createElement("button", { onClick: handleUpdateShopTab, className: btnPrimary }, "Speichern"),
+          React.createElement("button", { onClick: handleDeleteShopTab, className: btnDanger }, "Löschen")
         )
       ),
       React.createElement("div", { className: "space-y-2" },
@@ -1583,60 +1660,15 @@ function App() {
         )
       ),
       React.createElement("form", { onSubmit: handleAddShopTab, className: "p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-3" },
-        React.createElement("div", { className: "text-xs font-semibold text-slate-300" }, "Neuen Shop-Reiter anlegen"),
+        React.createElement("div", { className: "text-xs font-semibold text-slate-300" }, "Neue Shop-Kategorie anlegen"),
         React.createElement("div", { className: "flex flex-wrap gap-2" },
-          React.createElement("input", { type: "text", placeholder: "Name des neuen Reiters", value: newTabName, onChange: (e) => setNewTabName(e.target.value), className: `${inp} flex-1 min-w-[12rem]` }),
+          React.createElement("input", { type: "text", placeholder: "Name der Kategorie", value: newTabName, onChange: (e) => setNewTabName(e.target.value), className: `${inp} flex-1 min-w-[12rem]` }),
           React.createElement("input", { type: "text", placeholder: "Beschreibung (optional)", value: newTabDesc, onChange: (e) => setNewTabDesc(e.target.value), className: `${inp} flex-1 min-w-[12rem]` })
         ),
-        React.createElement("button", { type: "submit", className: btnPrimary }, "Reiter erstellen")
+        React.createElement("button", { type: "submit", className: btnPrimary }, "Kategorie erstellen")
       )
     ),
-    dmTab === "chars" && React.createElement("div", { className: "space-y-5" },
-      React.createElement("form", { onSubmit: handleAddCharacter, className: "p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-3" },
-        React.createElement("div", { className: "text-xs font-semibold text-slate-300" }, "Neuen Charakter anlegen"),
-        React.createElement("div", { className: "flex flex-wrap gap-2" },
-          React.createElement("input", { type: "text", placeholder: "Charaktername", value: newCharName, onChange: (e) => setNewCharName(e.target.value), className: `${inp} flex-1 min-w-[12rem]` }),
-          React.createElement("input", { type: "text", placeholder: "Klasse / Rolle", value: newCharRole, onChange: (e) => setNewCharRole(e.target.value), className: `${inp} flex-1 min-w-[12rem]` }),
-          React.createElement("input", { type: "text", placeholder: "Passwort", value: newCharPassword, onChange: (e) => setNewCharPassword(e.target.value), className: `${inp} w-32` })
-        ),
-        React.createElement("button", { type: "submit", className: btnPrimary }, "Charakter anlegen")
-      ),
-      characters.map((c) => React.createElement("div", { key: c.id, className: "p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-3" },
-        React.createElement("div", { className: "flex flex-wrap items-center justify-between gap-2" },
-          React.createElement("div", null,
-            React.createElement("div", { className: "font-bold text-sm text-white" }, c.name),
-            React.createElement("div", { className: "text-xs text-slate-400" }, c.role)
-          ),
-          !c.isParty && React.createElement("button", { onClick: () => handleDeleteCharacter(c), className: btnDanger }, "Löschen")
-        ),
-        React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-4 gap-2" },
-          COIN_META.map((m) => React.createElement("label", { key: m.key, className: "text-[11px] text-slate-400" }, m.label,
-            React.createElement("input", { type: "number", min: "0", value: c.coins[m.key] || 0, onChange: (e) => updateCharCoin(c.id, m.key, e.target.value), className: `${inp} w-full mt-1` })
-          ))
-        ),
-        React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-3 gap-2" },
-          React.createElement("label", { className: "text-[11px] text-slate-400" }, "Passwort",
-            React.createElement("input", { type: "text", value: c.password || "", onChange: (e) => updateChar(c.id, { password: e.target.value }), className: `${inp} w-full mt-1` })
-          ),
-          React.createElement("label", { className: "text-[11px] text-slate-400" }, "Lebensstil",
-            React.createElement("select", { value: c.lifestyle, onChange: (e) => updateChar(c.id, { lifestyle: e.target.value }), className: `${inp} w-full mt-1` },
-              LIFESTYLES.map((l) => React.createElement("option", { key: l.id, value: l.id }, l.name))
-            )
-          ),
-          React.createElement("label", { className: "text-[11px] text-slate-400" }, "Kreditbriefe (GM)",
-            React.createElement("input", { type: "number", min: "0", value: c.bankNotesGp || 0, onChange: (e) => updateChar(c.id, { bankNotesGp: Math.max(0, parseInt(e.target.value, 10) || 0) }), className: `${inp} w-full mt-1` })
-          )
-        )
-      )),
-      React.createElement("form", { onSubmit: handleChangeDmPassword, className: "p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-3" },
-        React.createElement("div", { className: "text-xs font-semibold text-slate-300" }, "DM-Passwort ändern (gilt nur auf diesem Gerät)"),
-        React.createElement("div", { className: "flex gap-2" },
-          React.createElement("input", { type: "text", placeholder: "Neues DM-Passwort", value: newDmPasswordInput, onChange: (e) => setNewDmPasswordInput(e.target.value), className: `${inp} flex-1` }),
-          React.createElement("button", { type: "submit", className: btnPrimary }, "Ändern")
-        )
-      )
-    ),
-    dmTab === "log" && React.createElement("div", { className: "space-y-2" },
+    dmFinanceTab === "log" && React.createElement("div", { className: "space-y-2" },
       React.createElement("div", { className: "flex justify-between items-center" },
         React.createElement("span", { className: "text-xs text-slate-400" }, logs.length, " Einträge (die letzten 100 werden gespeichert)"),
         React.createElement("button", { onClick: () => setLogs([]), className: btnDanger }, "Protokoll leeren")
@@ -1667,43 +1699,180 @@ function App() {
     )
   );
 
-  // Platzhalter-Ansicht für die 6 neuen Kampagnen-Reiter
+  // --- ALLGEMEINES EINSTELLUNGSMENÜ IN DER DM-ZENTRALE ---
+  const renderDmGeneralSettings = () => {
+    return React.createElement("div", { className: "space-y-6" },
+      // 1. Kampagnen-Grundeinstellungen & Währungsstandard (nur DM)
+      React.createElement("div", { className: panelBox },
+        React.createElement("div", { className: "flex items-center gap-2.5 border-b border-slate-800 pb-3" },
+          React.createElement(Settings, { className: "w-5 h-5 text-amber-400" }),
+          React.createElement("div", null,
+            React.createElement("h2", { className: "text-base font-bold text-white" }, "Allgemeine Kampagnen- & Systemeinstellungen"),
+            React.createElement("p", { className: "text-xs text-slate-400" }, "Globale Einstellungen, die für alle Reiter und alle Spieler gelten.")
+          )
+        ),
+        React.createElement("div", { className: "grid grid-cols-1 md:grid-cols-3 gap-4" },
+          React.createElement("label", { className: "text-xs text-slate-400" }, "Kampagnenname",
+            React.createElement("input", {
+              type: "text",
+              value: campaignMeta.campaignName || "",
+              onChange: (e) => setCampaignMeta({ ...campaignMeta, campaignName: e.target.value }),
+              className: `${inp} w-full mt-1`
+            })
+          ),
+          React.createElement("label", { className: "text-xs text-slate-400" }, "Aktuelles Ingame-Datum",
+            React.createElement("input", {
+              type: "text",
+              placeholder: "z.B. 14. Alturiak, 1492 TZ",
+              value: campaignMeta.currentDate || "",
+              onChange: (e) => setCampaignMeta({ ...campaignMeta, currentDate: e.target.value }),
+              className: `${inp} w-full mt-1`
+            })
+          ),
+          React.createElement("label", { className: "text-xs text-slate-400" }, "Aktuelle Sitzung (Session #)",
+            React.createElement("input", {
+              type: "number",
+              min: "1",
+              value: campaignMeta.sessionNumber || 1,
+              onChange: (e) => setCampaignMeta({ ...campaignMeta, sessionNumber: Math.max(1, parseInt(e.target.value, 10) || 1) }),
+              className: `${inp} w-full mt-1`
+            })
+          )
+        ),
+        React.createElement("div", { className: "pt-3 border-t border-slate-800 flex flex-wrap items-center justify-between gap-4" },
+          React.createElement("div", null,
+            React.createElement("div", { className: "text-xs font-bold text-slate-200" }, "Währungsstandard der Kampagne (Nur DM)"),
+            React.createElement("div", { className: "text-[11px] text-slate-400" }, "Bestimmt global, ob nicht-magische PHB-Preise und Lebensstile im Silber-Anker (1/10) oder Gold-Standard berechnet werden.")
+          ),
+          React.createElement("div", { className: "flex items-center gap-2 bg-slate-950 p-1.5 rounded-xl border border-slate-800" },
+            React.createElement("button", {
+              type: "button",
+              onClick: () => { setStandard("silver"); notify("Währungsstandard auf Silber-Anker gesetzt."); },
+              className: `px-3.5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${standard === "silver" ? "bg-slate-700 text-white" : "text-slate-400 hover:text-slate-200"}`
+            }, React.createElement(Scale, { className: "w-3.5 h-3.5" }), " Silber-Anker"),
+            React.createElement("button", {
+              type: "button",
+              onClick: () => { setStandard("gold"); notify("Währungsstandard auf Gold-Standard gesetzt."); },
+              className: `px-3.5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${standard === "gold" ? "bg-amber-600/30 text-amber-300 border border-amber-500/40" : "text-slate-400 hover:text-slate-200"}`
+            }, React.createElement(Coins, { className: "w-3.5 h-3.5" }), " Gold-Standard")
+          )
+        )
+      ),
+
+      // 2. Spieler- & Charakterverwaltung (für alle Reiter gültig)
+      React.createElement("div", { className: panelBox },
+        React.createElement("div", { className: "border-b border-slate-800 pb-3" },
+          React.createElement("h3", { className: "text-base font-bold text-white" }, "Spieler, Charaktere & Zugänge"),
+          React.createElement("p", { className: "text-xs text-slate-400" }, "Angelegte Charaktere stehen automatisch in allen Kampagnen-Reitern (Finanzen, Inventar, Bastion, Ruf, Downtime) zur Verfügung.")
+        ),
+        React.createElement("form", { onSubmit: handleAddCharacter, className: "p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-3" },
+          React.createElement("div", { className: "text-xs font-semibold text-amber-300" }, "Neuen Spieler / Charakter erstellen"),
+          React.createElement("div", { className: "flex flex-wrap gap-2" },
+            React.createElement("input", { type: "text", placeholder: "Charaktername", value: newCharName, onChange: (e) => setNewCharName(e.target.value), className: `${inp} flex-1 min-w-[12rem]` }),
+            React.createElement("input", { type: "text", placeholder: "Klasse / Stufe / Rolle", value: newCharRole, onChange: (e) => setNewCharRole(e.target.value), className: `${inp} flex-1 min-w-[12rem]` }),
+            React.createElement("input", { type: "text", placeholder: "Login-Passwort", value: newCharPassword, onChange: (e) => setNewCharPassword(e.target.value), className: `${inp} w-36` })
+          ),
+          React.createElement("button", { type: "submit", className: btnPrimary }, "Spieler anlegen")
+        ),
+        React.createElement("div", { className: "space-y-3" },
+          characters.map((c) => React.createElement("div", { key: c.id, className: "p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-3" },
+            React.createElement("div", { className: "flex flex-wrap items-center justify-between gap-2" },
+              React.createElement("div", { className: "flex items-center gap-2" },
+                React.createElement("span", { className: "font-bold text-sm text-white" }, c.name),
+                c.isParty && React.createElement("span", { className: "text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30" }, "Gruppenkasse")
+              ),
+              React.createElement("div", { className: "flex items-center gap-2" },
+                !c.isParty && React.createElement("button", { type: "button", onClick: () => handleCopyInviteLink(c), className: "px-2.5 py-1 rounded bg-emerald-900/80 hover:bg-emerald-800 border border-emerald-700/50 text-emerald-200 text-xs" }, "Einladungslink kopieren"),
+                !c.isParty && React.createElement("button", { type: "button", onClick: () => handleDeleteCharacter(c), className: btnDanger }, "Löschen")
+              )
+            ),
+            React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-3 gap-3" },
+              React.createElement("label", { className: "text-[11px] text-slate-400" }, "Anzeigename",
+                React.createElement("input", { type: "text", value: c.name, onChange: (e) => updateChar(c.id, { name: e.target.value }), className: `${inp} w-full mt-1` })
+              ),
+              React.createElement("label", { className: "text-[11px] text-slate-400" }, "Klasse / Beschreibung",
+                React.createElement("input", { type: "text", value: c.role || "", onChange: (e) => updateChar(c.id, { role: e.target.value }), className: `${inp} w-full mt-1` })
+              ),
+              React.createElement("label", { className: "text-[11px] text-slate-400" }, c.isParty ? "Gruppenkassen-Passwort" : "Login-Passwort",
+                React.createElement("input", { type: "text", value: c.password || "", onChange: (e) => updateChar(c.id, { password: e.target.value }), className: `${inp} w-full mt-1` })
+              )
+            )
+          ))
+        )
+      ),
+
+      // 3. Sicherheit & Datensicherung
+      React.createElement("div", { className: panelBox },
+        React.createElement("div", { className: "border-b border-slate-800 pb-3" },
+          React.createElement("h3", { className: "text-base font-bold text-white" }, "DM-Sicherheit & Datensicherung"),
+          React.createElement("p", { className: "text-xs text-slate-400" }, "Masterpasswort verwalten sowie kompletten Spielstand exportieren, importieren oder zurücksetzen.")
+        ),
+        React.createElement("form", { onSubmit: handleChangeDmPassword, className: "p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-3" },
+          React.createElement("div", { className: "text-xs font-semibold text-slate-300" }, "DM-Masterpasswort ändern (lokal auf diesem Gerät)"),
+          React.createElement("div", { className: "flex flex-wrap gap-2" },
+            React.createElement("input", { type: "text", placeholder: "Neues DM-Passwort (mind. 4 Zeichen)", value: newDmPasswordInput, onChange: (e) => setNewDmPasswordInput(e.target.value), className: `${inp} flex-1 min-w-[14rem]` }),
+            React.createElement("button", { type: "submit", className: btnPrimary }, "Passwort speichern")
+          )
+        ),
+        React.createElement("div", { className: "flex flex-wrap gap-2 pt-2" },
+          React.createElement("button", { type: "button", onClick: handleExportJson, className: btnGhost }, "Gesamten Spielstand als JSON exportieren"),
+          React.createElement("label", { className: btnGhost }, "JSON-Spielstand importieren", React.createElement("input", { type: "file", accept: "application/json,.json", className: "hidden", onChange: handleImportJson })),
+          React.createElement("button", { type: "button", onClick: handleResetAll, className: btnDanger }, "Komplette Datenbank zurücksetzen")
+        )
+      )
+    );
+  };
+
+  // --- PLATZHALTER-ANSICHT FÜR DIE 6 NEUEN KAMPAGNEN-REITER (Getrennt nach Spieler- & DM-Ansicht) ---
   const renderPlaceholderModule = (moduleKey) => {
     const info = PLACEHOLDER_INFO[moduleKey];
     const tabMeta = CAMPAIGN_TABS.find((t) => t.id === moduleKey);
     const TabIcon = tabMeta ? tabMeta.Icon : Compass;
     if (!info) return null;
+    const isDm = authMode === "dm";
+    const points = isDm ? info.dmPoints : info.playerPoints;
+    const subtitle = isDm ? info.dmSubtitle : info.playerSubtitle;
+
     return React.createElement("div", { className: "bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-xl max-w-4xl mx-auto space-y-6" },
-      React.createElement("div", { className: "flex items-start gap-4 border-b border-slate-800 pb-5" },
-        React.createElement("div", { className: "p-3 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-400" },
-          React.createElement(TabIcon, { className: "w-7 h-7" })
-        ),
-        React.createElement("div", { className: "space-y-1" },
-          React.createElement("div", { className: "flex flex-wrap items-center gap-2" },
-            React.createElement("h2", { className: "text-xl font-bold text-white" }, info.title),
-            React.createElement("span", { className: "text-[11px] uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-slate-800 text-amber-300 border border-slate-700" }, "In Vorbereitung")
+      React.createElement("div", { className: "flex items-start justify-between gap-4 border-b border-slate-800 pb-5" },
+        React.createElement("div", { className: "flex items-start gap-4" },
+          React.createElement("div", { className: `p-3 rounded-2xl border ${isDm ? "bg-amber-500/15 border-amber-500/30 text-amber-400" : "bg-emerald-500/15 border-emerald-500/30 text-emerald-400"}` },
+            React.createElement(TabIcon, { className: "w-7 h-7" })
           ),
-          React.createElement("p", { className: "text-sm text-slate-400" }, info.subtitle)
+          React.createElement("div", { className: "space-y-1" },
+            React.createElement("div", { className: "flex flex-wrap items-center gap-2" },
+              React.createElement("h2", { className: "text-xl font-bold text-white" }, info.title),
+              React.createElement("span", { className: `text-[11px] uppercase tracking-wider px-2.5 py-0.5 rounded-full border ${isDm ? "bg-amber-950/60 text-amber-300 border-amber-600/40" : "bg-emerald-950/60 text-emerald-300 border-emerald-600/40"}` },
+                isDm ? "DM-Verwaltung (In Vorbereitung)" : `Spieler-Ansicht: ${loggedInPlayer ? loggedInPlayer.name : ""}`
+              )
+            ),
+            React.createElement("p", { className: "text-sm text-slate-400" }, subtitle)
+          )
         )
       ),
       React.createElement("div", { className: "space-y-3" },
-        React.createElement("h3", { className: "text-xs font-semibold uppercase tracking-wider text-slate-400" }, "Geplante Funktionen dieses Reiters"),
+        React.createElement("h3", { className: "text-xs font-semibold uppercase tracking-wider text-slate-400" },
+          isDm ? "Geplante DM-Steuerung & Verwaltung in diesem Reiter" : "Geplante Funktionen für dich als Spieler"
+        ),
         React.createElement("ul", { className: "space-y-2.5" },
-          info.points.map((pt, idx) => React.createElement("li", { key: idx, className: "flex items-start gap-2.5 text-sm text-slate-300 bg-slate-950/60 border border-slate-800/80 p-3 rounded-xl" },
-            React.createElement("span", { className: "w-2 h-2 rounded-full bg-amber-400 mt-1.5 shrink-0" }),
+          points.map((pt, idx) => React.createElement("li", { key: idx, className: "flex items-start gap-2.5 text-sm text-slate-300 bg-slate-950/60 border border-slate-800/80 p-3 rounded-xl" },
+            React.createElement("span", { className: `w-2 h-2 rounded-full mt-1.5 shrink-0 ${isDm ? "bg-amber-400" : "bg-emerald-400"}` }),
             React.createElement("span", null, pt)
           ))
         )
       ),
-      React.createElement("div", { className: "pt-2 flex justify-between items-center text-xs text-slate-500" },
-        React.createElement("span", null, "Dieses Modul wird im nächsten Schritt gemeinsam mit Datenstruktur und Live-Sync befüllt."),
+      React.createElement("div", { className: "pt-2 flex flex-wrap justify-between items-center gap-2 text-xs text-slate-500" },
+        React.createElement("span", null, isDm
+          ? "Spezifische Einstellungen und Interaktionen für diesen Bereich werden direkt hier in der DM-Zentrale integriert."
+          : "Sobald dieses Modul befüllt ist, siehst du hier automatisch die Daten deines Charakters."
+        ),
         React.createElement("button", { onClick: () => setMainSection("finances"), className: btnGhost }, "Zurück zu Finanzen & Shops")
       )
     );
   };
 
-  // DM Genehmigungs-Popup Modal
-  const approvalModal = role === "dm" && isDmUnlocked && showApprovalModal && pendingRequests.length > 0 && React.createElement(
+  // --- DM GENEHMIGUNGS-POPUP MODAL ---
+  const approvalModal = authMode === "dm" && showApprovalModal && pendingRequests.length > 0 && React.createElement(
     "div",
     { className: "fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4" },
     React.createElement("div", { className: "bg-slate-900 border-2 border-amber-500/60 rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-4 max-h-[85vh] flex flex-col" },
@@ -1750,6 +1919,92 @@ function App() {
     )
   );
 
+  // =========================================================================
+  // 1. VORGESCHALTETER LOGIN-BILDSCHIRM (VOR ALLEN REITER-INHALTEN)
+  // =========================================================================
+  if (!authMode) {
+    return React.createElement("div", { className: "min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-amber-500/30 flex flex-col" },
+      toast && React.createElement("div", { className: `fixed bottom-5 right-5 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-2xl border backdrop-blur-md ${toast.type === "error" ? "bg-red-950/90 border-red-600 text-red-100" : "bg-emerald-950/90 border-emerald-500 text-emerald-100"}` },
+        toast.type === "error" ? React.createElement(AlertTriangle, { className: "w-5 h-5 text-red-400" }) : React.createElement(CheckCircle2, { className: "w-5 h-5 text-emerald-400" }),
+        React.createElement("span", { className: "text-sm font-medium" }, toast.message)
+      ),
+      React.createElement("header", { className: "bg-slate-900/95 border-b border-amber-500/20" },
+        React.createElement("div", { className: "max-w-7xl mx-auto px-4 py-4 flex flex-wrap items-center justify-between gap-4" },
+          React.createElement("div", { className: "flex items-center gap-3" },
+            React.createElement("div", { className: "p-2.5 rounded-xl bg-gradient-to-br from-amber-500/20 to-amber-700/20 border border-amber-500/40" },
+              React.createElement(Coins, { className: "w-6 h-6 text-amber-400" })
+            ),
+            React.createElement("div", null,
+              React.createElement("h1", { className: "text-lg font-bold tracking-tight text-amber-100 flex items-center gap-2" },
+                campaignMeta.campaignName || "D&D 5.5e Kampagnen-Manager",
+                React.createElement("span", { className: "text-[11px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30" }, "2024")
+              ),
+              React.createElement("p", { className: "text-xs text-slate-400 flex items-center gap-2" },
+                `${campaignMeta.currentDate || ""} · Session #${campaignMeta.sessionNumber || 1}`,
+                React.createElement("span", { className: `px-1.5 py-0.5 rounded-full text-[10px] font-semibold border ${syncStatus === "live" ? "bg-emerald-950/60 text-emerald-300 border-emerald-600/50" : syncStatus === "connecting" ? "bg-amber-950/60 text-amber-300 border-amber-600/50" : syncStatus === "error" ? "bg-red-950/60 text-red-300 border-red-600/50" : "bg-slate-800 text-slate-400 border-slate-600/50"}` },
+                  syncStatus === "live" ? "● Live-Sync" : syncStatus === "connecting" ? "… verbinde" : syncStatus === "error" ? "⚠ Sync-Fehler" : "Nur lokal"
+                )
+              )
+            )
+          )
+        )
+      ),
+      React.createElement("main", { className: "flex-1 flex items-center justify-center p-4" },
+        React.createElement("div", { className: "w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-6" },
+          React.createElement("div", { className: "grid grid-cols-2 gap-2 bg-slate-950 p-1.5 rounded-xl border border-slate-800" },
+            React.createElement("button", {
+              type: "button",
+              onClick: () => setLoginRoleSelect("player"),
+              className: `py-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-2 ${loginRoleSelect === "player" ? "bg-emerald-600 text-white shadow" : "text-slate-400 hover:text-slate-200"}`
+            }, React.createElement(Shield, { className: "w-4 h-4" }), " Spieler-Login"),
+            React.createElement("button", {
+              type: "button",
+              onClick: () => setLoginRoleSelect("dm"),
+              className: `py-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-2 ${loginRoleSelect === "dm" ? "bg-amber-500 text-slate-950 shadow" : "text-slate-400 hover:text-slate-200"}`
+            }, React.createElement(Crown, { className: "w-4 h-4" }), " DM-Zentrale")
+          ),
+          loginRoleSelect === "player" ? React.createElement("div", { className: "space-y-4" },
+            React.createElement("div", { className: "text-center space-y-1.5" },
+              React.createElement("div", { className: "w-12 h-12 rounded-2xl bg-emerald-500/15 border border-emerald-500/40 flex items-center justify-center mx-auto" },
+                React.createElement(UserCheck, { className: "w-6 h-6 text-emerald-400" })
+              ),
+              React.createElement("h2", { className: "text-lg font-bold text-white" }, "Als Spieler anmelden"),
+              React.createElement("p", { className: "text-xs text-slate-400" }, "Alle Kampagnen-Reiter (Finanzen, Inventar, Bastion, Ruf, Quests, Lexikon & Downtime) werden für deinen Charakter geladen.")
+            ),
+            React.createElement("form", { onSubmit: handlePlayerLogin, className: "space-y-3" },
+              React.createElement("div", null,
+                React.createElement("label", { className: "text-xs text-slate-400 block mb-1" }, "Charaktername"),
+                React.createElement("input", { type: "text", placeholder: "z.B. Thrain Eisenfaust", value: loginNameInput, onChange: (e) => setLoginNameInput(e.target.value), className: "w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white focus:outline-none focus:border-emerald-500", autoFocus: true })
+              ),
+              React.createElement("div", null,
+                React.createElement("label", { className: "text-xs text-slate-400 block mb-1" }, "Passwort"),
+                React.createElement("input", { type: "password", placeholder: "Passwort...", value: loginPasswordInput, onChange: (e) => setLoginPasswordInput(e.target.value), className: "w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white focus:outline-none focus:border-emerald-500" })
+              ),
+              React.createElement("button", { type: "submit", className: "w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm transition" }, "Kampagne betreten")
+            )
+          ) : React.createElement("div", { className: "space-y-4" },
+            React.createElement("div", { className: "text-center space-y-1.5" },
+              React.createElement("div", { className: "w-12 h-12 rounded-2xl bg-amber-500/15 border border-amber-500/40 flex items-center justify-center mx-auto" },
+                React.createElement(Crown, { className: "w-6 h-6 text-amber-400" })
+              ),
+              React.createElement("h2", { className: "text-lg font-bold text-amber-200" }, "DM-Zentrale entsperren"),
+              React.createElement("p", { className: "text-xs text-slate-400" }, "Zugriff auf alle Kampagnen-Reiter, Genehmigungen, Silber-/Gold-Standard & Spielerverwaltung (Standard: ", React.createElement("strong", null, "dm2024"), ").")
+            ),
+            React.createElement("form", { onSubmit: handleUnlockDm, className: "space-y-3" },
+              React.createElement("input", { type: "password", placeholder: "DM-Masterpasswort...", value: dmPasswordInput, onChange: (e) => setDmPasswordInput(e.target.value), className: "w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-center text-sm text-white focus:outline-none focus:border-amber-500", autoFocus: true }),
+              React.createElement("button", { type: "submit", className: "w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-sm transition" }, "DM-Zentrale öffnen")
+            )
+          )
+        )
+      )
+    );
+  }
+
+  // =========================================================================
+  // 2. EINGELOGGTE ANSICHT (ENTWEDER SPIELER-MODUS ODER DM-ZENTRALE)
+  // =========================================================================
+  const isDm = authMode === "dm";
+
   return React.createElement("div", { className: "min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-amber-500/30" },
     toast && React.createElement("div", { className: `fixed bottom-5 right-5 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-2xl border backdrop-blur-md ${toast.type === "error" ? "bg-red-950/90 border-red-600 text-red-100" : "bg-emerald-950/90 border-emerald-500 text-emerald-100"}` },
       toast.type === "error" ? React.createElement(AlertTriangle, { className: "w-5 h-5 text-red-400" }) : React.createElement(CheckCircle2, { className: "w-5 h-5 text-emerald-400" }),
@@ -1759,224 +2014,205 @@ function App() {
     React.createElement("header", { className: "sticky top-0 z-30 bg-slate-900/95 border-b border-amber-500/20 backdrop-blur-md" },
       React.createElement("div", { className: "max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-4" },
         React.createElement("div", { className: "flex items-center gap-3" },
-          React.createElement("div", { className: "p-2.5 rounded-xl bg-gradient-to-br from-amber-500/20 to-amber-700/20 border border-amber-500/40" },
-            React.createElement(Coins, { className: "w-6 h-6 text-amber-400" })
+          React.createElement("div", { className: `p-2.5 rounded-xl border ${isDm ? "bg-amber-500/15 border-amber-500/40" : "bg-emerald-500/15 border-emerald-500/40"}` },
+            isDm ? React.createElement(Crown, { className: "w-6 h-6 text-amber-400" }) : React.createElement(Shield, { className: "w-6 h-6 text-emerald-400" })
           ),
           React.createElement("div", null,
             React.createElement("h1", { className: "text-lg font-bold tracking-tight text-amber-100 flex items-center gap-2" },
-              "D&D 5.5e Kampagnen- & Kontor-Manager",
-              React.createElement("span", { className: "text-[11px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30" }, "2024")
+              campaignMeta.campaignName || "D&D 5.5e Kampagnen-Manager",
+              React.createElement("span", { className: `text-[11px] uppercase tracking-wider px-2 py-0.5 rounded-full border ${isDm ? "bg-amber-500/15 text-amber-300 border-amber-500/30" : "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"}` },
+                isDm ? "DM-Zentrale" : (loggedInPlayer ? loggedInPlayer.name : "Spieler")
+              )
             ),
-            React.createElement("p", { className: "text-xs text-slate-400 flex items-center gap-2" },
-              "Wirtschaft, Bastion & Kampagnenverwaltung",
+            React.createElement("p", { className: "text-xs text-slate-400 flex flex-wrap items-center gap-2" },
+              React.createElement("span", null, `${campaignMeta.currentDate || ""} · Session #${campaignMeta.sessionNumber || 1}`),
+              React.createElement("span", { className: "px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 text-[10px]" },
+                standard === "silver" ? "Silber-Anker" : "Gold-Standard"
+              ),
               React.createElement("span", { className: `px-1.5 py-0.5 rounded-full text-[10px] font-semibold border ${syncStatus === "live" ? "bg-emerald-950/60 text-emerald-300 border-emerald-600/50" : syncStatus === "connecting" ? "bg-amber-950/60 text-amber-300 border-amber-600/50" : syncStatus === "error" ? "bg-red-950/60 text-red-300 border-red-600/50" : "bg-slate-800 text-slate-400 border-slate-600/50"}` },
-                syncStatus === "live" ? "● Live-Sync (Firebase)" : syncStatus === "connecting" ? "… verbinde" : syncStatus === "error" ? "⚠ Sync-Fehler (lokal)" : "Nur lokal"
+                syncStatus === "live" ? "● Live-Sync" : syncStatus === "connecting" ? "… verbinde" : syncStatus === "error" ? "⚠ Sync-Fehler" : "Nur lokal"
               )
             )
           )
         ),
-        React.createElement("div", { className: "flex items-center gap-2 bg-slate-950 p-1 rounded-xl border border-slate-800" },
-          React.createElement("button", { onClick: () => setStandard("silver"), className: `px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${standard === "silver" ? "bg-slate-700 text-white" : "text-slate-400"}` },
-            React.createElement(Scale, { className: "w-3.5 h-3.5" }), " Silber-Anker"
+
+        // Rechts im Header: Nur DM sieht Silber-/Gold-Standard & Genehmigungs-Badge; beide haben Abmelden
+        React.createElement("div", { className: "flex flex-wrap items-center gap-2" },
+          isDm && React.createElement("div", { className: "flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800" },
+            React.createElement("button", { onClick: () => setStandard("silver"), className: `px-2.5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${standard === "silver" ? "bg-slate-700 text-white" : "text-slate-400 hover:text-slate-200"}` },
+              React.createElement(Scale, { className: "w-3.5 h-3.5" }), " Silber-Anker"
+            ),
+            React.createElement("button", { onClick: () => setStandard("gold"), className: `px-2.5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${standard === "gold" ? "bg-amber-600/30 text-amber-300 border border-amber-500/40" : "text-slate-400 hover:text-slate-200"}` },
+              React.createElement(Coins, { className: "w-3.5 h-3.5" }), " Gold-Standard"
+            )
           ),
-          React.createElement("button", { onClick: () => setStandard("gold"), className: `px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${standard === "gold" ? "bg-amber-600/30 text-amber-300 border border-amber-500/40" : "text-slate-400"}` },
-            React.createElement(Coins, { className: "w-3.5 h-3.5" }), " Gold-Standard"
-          )
-        ),
-        React.createElement("div", { className: "flex items-center gap-2 bg-slate-950 p-1 rounded-xl border border-slate-800" },
-          React.createElement("button", { onClick: () => setRole("player"), className: `px-4 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2 ${role === "player" ? "bg-emerald-600 text-white" : "text-slate-400"}` },
-            React.createElement(Shield, { className: "w-4 h-4" }), " Spieler-Ansicht"
+          isDm && pendingRequests.length > 0 && React.createElement("button", { onClick: () => setShowApprovalModal(true), className: "px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs text-white font-bold flex items-center gap-1.5 animate-pulse" },
+            React.createElement(Bell, { className: "w-3.5 h-3.5" }), ` Anfragen (${pendingRequests.length})`
           ),
-          React.createElement("button", { onClick: () => setRole("dm"), className: `px-4 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2 ${role === "dm" ? "bg-amber-600 text-slate-950" : "text-slate-400"}` },
-            isDmUnlocked ? React.createElement(Crown, { className: "w-4 h-4" }) : React.createElement(Lock, { className: "w-4 h-4" }), " DM-Zentrale",
-            pendingRequests.length > 0 && React.createElement("span", { className: "ml-1 px-1.5 py-0.5 rounded-full text-[10px] bg-red-600 text-white animate-pulse" }, pendingRequests.length)
+          React.createElement("button", { onClick: handleLogoutAll, className: "px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-red-950 border border-slate-700 text-xs font-semibold text-slate-300 flex items-center gap-1.5 transition" },
+            React.createElement(LogOut, { className: "w-3.5 h-3.5" }), " Abmelden"
           )
         )
       ),
-      // Haupt-Navigationsleiste für alle 7 Spielbereiche
+
+      // Haupt-Navigationsleiste für alle Kampagnen-Reiter (+ Allgemeine Einstellungen exklusiv in der DM-Zentrale)
       React.createElement("div", { className: "border-t border-slate-800/80 bg-slate-950/80" },
-        React.createElement("div", { className: "max-w-7xl mx-auto px-4 py-2 flex items-center gap-1.5 overflow-x-auto" },
-          CAMPAIGN_TABS.map(({ id, label, Icon }) => {
-            const active = mainSection === id;
-            return React.createElement(
-              "button",
-              {
-                key: id,
-                onClick: () => setMainSection(id),
-                className: `px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition flex items-center gap-1.5 border ${active ? "bg-amber-500/20 border-amber-500 text-amber-200 shadow-sm" : "bg-slate-900/60 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700"}`
-              },
-              React.createElement(Icon, { className: `w-3.5 h-3.5 ${active ? "text-amber-400" : "text-slate-500"}` }),
-              React.createElement("span", null, label)
-            );
-          })
+        React.createElement("div", { className: "max-w-7xl mx-auto px-4 py-2 flex items-center justify-between gap-2 overflow-x-auto" },
+          React.createElement("div", { className: "flex items-center gap-1.5" },
+            CAMPAIGN_TABS.map(({ id, label, Icon }) => {
+              const active = mainSection === id;
+              return React.createElement(
+                "button",
+                {
+                  key: id,
+                  onClick: () => setMainSection(id),
+                  className: `px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition flex items-center gap-1.5 border ${active ? (isDm ? "bg-amber-500/20 border-amber-500 text-amber-200 shadow-sm" : "bg-emerald-500/20 border-emerald-500 text-emerald-200 shadow-sm") : "bg-slate-900/60 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700"}`
+                },
+                React.createElement(Icon, { className: `w-3.5 h-3.5 ${active ? (isDm ? "text-amber-400" : "text-emerald-400") : "text-slate-500"}` }),
+                React.createElement("span", null, label),
+                id === "finances" && isDm && pendingRequests.length > 0 && React.createElement("span", { className: "ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-red-600 text-white" }, pendingRequests.length)
+              );
+            })
+          ),
+          isDm && React.createElement(
+            "button",
+            {
+              onClick: () => setMainSection("__settings"),
+              className: `px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition flex items-center gap-1.5 border ${mainSection === "__settings" ? "bg-amber-500/25 border-amber-400 text-amber-200 shadow-sm" : "bg-slate-900 border-slate-700 text-slate-300 hover:text-white hover:border-amber-500/50"}`
+            },
+            React.createElement(Settings, { className: `w-3.5 h-3.5 ${mainSection === "__settings" ? "text-amber-300" : "text-slate-400"}` }),
+            React.createElement("span", null, "Allgemeine Einstellungen")
+          )
         )
       )
     ),
+
     React.createElement("main", { className: "max-w-7xl mx-auto px-4 py-6" },
-      // Wenn ein anderer Reiter als "finances" gewählt wurde, zeige das jeweilige Modul
-      mainSection !== "finances" ? renderPlaceholderModule(mainSection) : React.createElement(React.Fragment, null,
-        role === "player" && !loggedInPlayer && React.createElement("div", { className: "max-w-md mx-auto my-12 bg-slate-900 border border-emerald-500/30 rounded-2xl p-6 shadow-2xl space-y-5" },
-          React.createElement("div", { className: "text-center space-y-2" },
-            React.createElement("div", { className: "w-12 h-12 rounded-2xl bg-emerald-500/15 border border-emerald-500/40 flex items-center justify-center mx-auto" },
-              React.createElement(UserCheck, { className: "w-6 h-6 text-emerald-400" })
-            ),
-            React.createElement("h2", { className: "text-lg font-bold text-white" }, "Spieler-Anmeldung"),
-            React.createElement("p", { className: "text-xs text-slate-400" }, "Melde dich mit deinem Charakternamen und Passwort an.")
-          ),
-          React.createElement("form", { onSubmit: handlePlayerLogin, className: "space-y-3" },
-            React.createElement("div", null,
-              React.createElement("label", { className: "text-xs text-slate-400 block mb-1" }, "Charaktername"),
-              React.createElement("input", { type: "text", placeholder: "z.B. Thrain Eisenfaust", value: loginNameInput, onChange: (e) => setLoginNameInput(e.target.value), className: "w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white focus:outline-none focus:border-emerald-500", autoFocus: true })
-            ),
-            React.createElement("div", null,
-              React.createElement("label", { className: "text-xs text-slate-400 block mb-1" }, "Passwort"),
-              React.createElement("input", { type: "password", placeholder: "Passwort...", value: loginPasswordInput, onChange: (e) => setLoginPasswordInput(e.target.value), className: "w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white focus:outline-none focus:border-emerald-500" })
-            ),
-            React.createElement("button", { type: "submit", className: "w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm transition" }, "Anmelden")
+      // A) DM Allgemeine Einstellungen
+      isDm && mainSection === "__settings" ? renderDmGeneralSettings() :
+      // B) Die 6 neuen Reiter (Spieler- bzw. DM-bezogen)
+      mainSection !== "finances" ? renderPlaceholderModule(mainSection) :
+      // C) Reiter "Finanzen & Shops" – SPIELER-MODUS
+      !isDm ? React.createElement("div", { className: "space-y-6" },
+        React.createElement("div", { className: "bg-slate-900/80 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4" },
+          React.createElement("div", { className: "flex flex-wrap items-center gap-2" },
+            React.createElement("span", { className: "text-xs font-semibold text-slate-400 mr-2" }, "Deine Konten:"),
+            visiblePlayerTabs.map((char) => {
+              const unlocked = char.id === loggedInPlayer.id || char.isParty && isPartyUnlocked;
+              return React.createElement("button", { key: char.id, onClick: () => setActiveCharId(char.id), className: `px-3.5 py-2 rounded-xl text-sm font-medium transition flex items-center gap-2 border ${char.id === activeChar.id ? "bg-emerald-500/15 border-emerald-500 text-emerald-200" : "bg-slate-950/70 border-slate-800 text-slate-400"}` },
+                unlocked ? React.createElement(Unlock, { className: "w-3.5 h-3.5 text-emerald-400" }) : React.createElement(Lock, { className: "w-3.5 h-3.5 text-amber-400" }),
+                React.createElement("span", null, char.name)
+              );
+            })
           )
         ),
-        role === "player" && loggedInPlayer && React.createElement("div", { className: "space-y-6" },
-          React.createElement("div", { className: "bg-slate-900/80 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4" },
-            React.createElement("div", { className: "flex flex-wrap items-center gap-2" },
-              React.createElement("span", { className: "text-xs font-semibold text-slate-400 mr-2" }, "Deine Konten:"),
-              visiblePlayerTabs.map((char) => {
-                const unlocked = char.id === loggedInPlayer.id || char.isParty && isPartyUnlocked;
-                return React.createElement("button", { key: char.id, onClick: () => setActiveCharId(char.id), className: `px-3.5 py-2 rounded-xl text-sm font-medium transition flex items-center gap-2 border ${char.id === activeChar.id ? "bg-amber-500/15 border-amber-500 text-amber-200" : "bg-slate-950/70 border-slate-800 text-slate-400"}` },
-                  unlocked ? React.createElement(Unlock, { className: "w-3.5 h-3.5 text-emerald-400" }) : React.createElement(Lock, { className: "w-3.5 h-3.5 text-amber-400" }),
-                  React.createElement("span", null, char.name)
-                );
-              })
-            ),
-            React.createElement("button", { onClick: handlePlayerLogout, className: "px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-red-950 border border-slate-700 text-xs font-semibold text-slate-300 flex items-center gap-1.5" },
-              React.createElement(LogOut, { className: "w-3.5 h-3.5" }), " Abmelden"
-            )
-          ),
-          !isCurrentTabUnlocked ? React.createElement("div", { className: "max-w-md mx-auto my-12 bg-slate-900 border border-amber-500/30 rounded-2xl p-6 shadow-2xl text-center space-y-4" },
-            React.createElement(KeyRound, { className: "w-8 h-8 text-amber-400 mx-auto" }),
-            React.createElement("h2", { className: "text-lg font-bold text-white" }, "Gruppenkasse gesperrt"),
-            React.createElement("form", { onSubmit: handleUnlockParty, className: "space-y-3" },
-              React.createElement("input", { type: "password", placeholder: "Kassen-Passwort...", value: partyPasswordInput, onChange: (e) => setPartyPasswordInput(e.target.value), className: "w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-center text-sm text-white", autoFocus: true }),
-              React.createElement("button", { type: "submit", className: "w-full py-2.5 rounded-xl bg-amber-500 text-slate-950 font-bold text-sm" }, "Freischalten")
-            )
-          ) : React.createElement(React.Fragment, null,
-            myRequestsBanner,
-            React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-3 gap-6" },
-              React.createElement("div", { className: "lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-5" },
-                React.createElement("div", { className: "flex justify-between items-center border-b border-slate-800 pb-3" },
-                  React.createElement("h2", { className: "text-lg font-bold text-white flex items-center gap-2" },
-                    React.createElement(Coins, { className: "w-5 h-5 text-amber-400" }), " ", activeChar.name
-                  ),
-                  React.createElement("span", { className: "text-xs text-slate-400" }, "Gewicht: ", activeWeight.kg, " kg")
-                ),
-                React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-4 gap-3" },
-                  COIN_META.map((m) => React.createElement("div", { key: m.key, className: `p-3.5 rounded-xl border ${m.bg} ${m.border}` },
-                    React.createElement("span", { className: "text-xs text-slate-400" }, m.label),
-                    React.createElement("div", { className: `text-2xl font-extrabold mt-1 ${m.color}` }, activeChar.coins[m.key] || 0)
-                  ))
-                ),
-                React.createElement("div", { className: "bg-slate-950 p-3 rounded-xl border border-slate-800 flex justify-between" },
-                  React.createElement("span", null, "Bargeld-Gesamtwert: ", React.createElement("strong", { className: "text-amber-300" }, formatCurrency(getTotalCopper(activeChar.coins), standard))),
-                  React.createElement("span", { className: "text-cyan-300" }, "Kreditbriefe: ", activeChar.bankNotesGp || 0, " GM")
-                ),
-                React.createElement("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-4" },
-                  React.createElement("div", { className: "bg-slate-950/60 p-3.5 rounded-xl border border-slate-800 space-y-2" },
-                    React.createElement("span", { className: "text-xs font-semibold text-slate-300" }, "Ausgabe anfragen"),
-                    React.createElement("div", { className: "flex gap-2" },
-                      React.createElement("input", { type: "number", min: "1", placeholder: "Menge", value: manualExpenseAmount, onChange: (e) => setManualExpenseAmount(e.target.value), className: "w-20 px-2 py-1 rounded bg-slate-900 border border-slate-700 text-sm text-white" }),
-                      React.createElement("select", { value: manualExpenseCoin, onChange: (e) => setManualExpenseCoin(e.target.value), className: "px-2 py-1 rounded bg-slate-900 border border-slate-700 text-sm text-white" },
-                        React.createElement("option", { value: "pp" }, "PM"),
-                        React.createElement("option", { value: "gp" }, "GM"),
-                        React.createElement("option", { value: "sp" }, "SM"),
-                        React.createElement("option", { value: "cp" }, "KM")
-                      ),
-                      React.createElement("input", { type: "text", placeholder: "Grund", value: manualExpenseReason, onChange: (e) => setManualExpenseReason(e.target.value), className: "flex-1 px-2 py-1 rounded bg-slate-900 border border-slate-700 text-sm text-white" })
-                    ),
-                    React.createElement("button", { onClick: handleManualExpense, className: "w-full py-1.5 rounded bg-red-600/20 hover:bg-red-600/30 border border-red-500/40 text-red-300 text-xs font-semibold transition" }, "Ausgabe anfragen")
-                  ),
-                  React.createElement("div", { className: "bg-slate-950/60 p-3.5 rounded-xl border border-slate-800 space-y-2" },
-                    React.createElement("span", { className: "text-xs font-semibold text-slate-300" }, "Überweisen anfragen"),
-                    React.createElement("div", { className: "flex gap-2" },
-                      React.createElement("input", { type: "number", min: "1", placeholder: "Menge", value: transferAmount, onChange: (e) => setTransferAmount(e.target.value), className: "w-20 px-2 py-1 rounded bg-slate-900 border border-slate-700 text-sm text-white" }),
-                      React.createElement("select", { value: transferCoinType, onChange: (e) => setTransferCoinType(e.target.value), className: "px-2 py-1 rounded bg-slate-900 border border-slate-700 text-sm text-white" },
-                        React.createElement("option", { value: "pp" }, "PM"),
-                        React.createElement("option", { value: "gp" }, "GM"),
-                        React.createElement("option", { value: "sp" }, "SM"),
-                        React.createElement("option", { value: "cp" }, "KM")
-                      ),
-                      React.createElement("select", { value: transferTargetId, onChange: (e) => setTransferTargetId(e.target.value), className: "flex-1 px-2 py-1 rounded bg-slate-900 border border-slate-700 text-sm text-white" },
-                        characters.filter((c) => c.id !== activeChar.id).map((c) => React.createElement("option", { key: c.id, value: c.id }, c.name))
-                      )
-                    ),
-                    React.createElement("button", { onClick: handleTransfer, className: "w-full py-1.5 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-xs font-semibold transition" }, "Überweisung anfragen")
-                  )
-                )
-              ),
-              React.createElement("div", { className: "bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4" },
+        !isCurrentTabUnlocked ? React.createElement("div", { className: "max-w-md mx-auto my-12 bg-slate-900 border border-amber-500/30 rounded-2xl p-6 shadow-2xl text-center space-y-4" },
+          React.createElement(KeyRound, { className: "w-8 h-8 text-amber-400 mx-auto" }),
+          React.createElement("h2", { className: "text-lg font-bold text-white" }, "Gruppenkasse gesperrt"),
+          React.createElement("form", { onSubmit: handleUnlockParty, className: "space-y-3" },
+            React.createElement("input", { type: "password", placeholder: "Kassen-Passwort...", value: partyPasswordInput, onChange: (e) => setPartyPasswordInput(e.target.value), className: "w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-center text-sm text-white", autoFocus: true }),
+            React.createElement("button", { type: "submit", className: "w-full py-2.5 rounded-xl bg-amber-500 text-slate-950 font-bold text-sm" }, "Freischalten")
+          )
+        ) : React.createElement(React.Fragment, null,
+          myRequestsBanner,
+          React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-3 gap-6" },
+            React.createElement("div", { className: "lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-5" },
+              React.createElement("div", { className: "flex justify-between items-center border-b border-slate-800 pb-3" },
                 React.createElement("h2", { className: "text-lg font-bold text-white flex items-center gap-2" },
-                  React.createElement(Compass, { className: "w-5 h-5 text-emerald-400" }), " Lebensstil"
+                  React.createElement(Coins, { className: "w-5 h-5 text-amber-400" }), " ", activeChar.name
                 ),
-                React.createElement("div", { className: "p-3.5 rounded-xl bg-emerald-950/20 border border-emerald-500/30" },
-                  React.createElement("span", { className: "text-xs text-slate-400 block" }, "Aktueller Status"),
-                  React.createElement("span", { className: "text-base font-bold text-white" }, currentLifestyleObj.name),
-                  React.createElement("div", { className: "text-xs text-amber-400 mt-1" }, formatCurrency(currentLifestyleCostCp, standard), " / Woche")
+                React.createElement("span", { className: "text-xs text-slate-400" }, "Gewicht: ", activeWeight.kg, " kg")
+              ),
+              React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-4 gap-3" },
+                COIN_META.map((m) => React.createElement("div", { key: m.key, className: `p-3.5 rounded-xl border ${m.bg} ${m.border}` },
+                  React.createElement("span", { className: "text-xs text-slate-400" }, m.label),
+                  React.createElement("div", { className: `text-2xl font-extrabold mt-1 ${m.color}` }, activeChar.coins[m.key] || 0)
+                ))
+              ),
+              React.createElement("div", { className: "bg-slate-950 p-3 rounded-xl border border-slate-800 flex justify-between" },
+                React.createElement("span", null, "Bargeld-Gesamtwert: ", React.createElement("strong", { className: "text-amber-300" }, formatCurrency(getTotalCopper(activeChar.coins), standard))),
+                React.createElement("span", { className: "text-cyan-300" }, "Kreditbriefe: ", activeChar.bankNotesGp || 0, " GM")
+              ),
+              React.createElement("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-4" },
+                React.createElement("div", { className: "bg-slate-950/60 p-3.5 rounded-xl border border-slate-800 space-y-2" },
+                  React.createElement("span", { className: "text-xs font-semibold text-slate-300" }, "Ausgabe anfragen"),
+                  React.createElement("div", { className: "flex gap-2" },
+                    React.createElement("input", { type: "number", min: "1", placeholder: "Menge", value: manualExpenseAmount, onChange: (e) => setManualExpenseAmount(e.target.value), className: "w-20 px-2 py-1 rounded bg-slate-900 border border-slate-700 text-sm text-white" }),
+                    React.createElement("select", { value: manualExpenseCoin, onChange: (e) => setManualExpenseCoin(e.target.value), className: "px-2 py-1 rounded bg-slate-900 border border-slate-700 text-sm text-white" },
+                      React.createElement("option", { value: "pp" }, "PM"),
+                      React.createElement("option", { value: "gp" }, "GM"),
+                      React.createElement("option", { value: "sp" }, "SM"),
+                      React.createElement("option", { value: "cp" }, "KM")
+                    ),
+                    React.createElement("input", { type: "text", placeholder: "Grund", value: manualExpenseReason, onChange: (e) => setManualExpenseReason(e.target.value), className: "flex-1 px-2 py-1 rounded bg-slate-900 border border-slate-700 text-sm text-white" })
+                  ),
+                  React.createElement("button", { onClick: handleManualExpense, className: "w-full py-1.5 rounded bg-red-600/20 hover:bg-red-600/30 border border-red-500/40 text-red-300 text-xs font-semibold transition" }, "Ausgabe anfragen")
                 ),
-                React.createElement("p", { className: "text-xs text-slate-300" }, currentLifestyleObj.description)
+                React.createElement("div", { className: "bg-slate-950/60 p-3.5 rounded-xl border border-slate-800 space-y-2" },
+                  React.createElement("span", { className: "text-xs font-semibold text-slate-300" }, "Überweisen anfragen"),
+                  React.createElement("div", { className: "flex gap-2" },
+                    React.createElement("input", { type: "number", min: "1", placeholder: "Menge", value: transferAmount, onChange: (e) => setTransferAmount(e.target.value), className: "w-20 px-2 py-1 rounded bg-slate-900 border border-slate-700 text-sm text-white" }),
+                    React.createElement("select", { value: transferCoinType, onChange: (e) => setTransferCoinType(e.target.value), className: "px-2 py-1 rounded bg-slate-900 border border-slate-700 text-sm text-white" },
+                      React.createElement("option", { value: "pp" }, "PM"),
+                      React.createElement("option", { value: "gp" }, "GM"),
+                      React.createElement("option", { value: "sp" }, "SM"),
+                      React.createElement("option", { value: "cp" }, "KM")
+                    ),
+                    React.createElement("select", { value: transferTargetId, onChange: (e) => setTransferTargetId(e.target.value), className: "flex-1 px-2 py-1 rounded bg-slate-900 border border-slate-700 text-sm text-white" },
+                      characters.filter((c) => c.id !== activeChar.id).map((c) => React.createElement("option", { key: c.id, value: c.id }, c.name))
+                    )
+                  ),
+                  React.createElement("button", { onClick: handleTransfer, className: "w-full py-1.5 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-xs font-semibold transition" }, "Überweisung anfragen")
+                )
               )
             ),
-            playerPanel
-          )
-        ),
-        role === "dm" && !isDmUnlocked && React.createElement("div", { className: "max-w-md mx-auto my-12 bg-slate-900 border border-amber-500/40 rounded-2xl p-6 shadow-2xl text-center space-y-4" },
-          React.createElement(Crown, { className: "w-8 h-8 text-amber-400 mx-auto" }),
-          React.createElement("h2", { className: "text-lg font-bold text-amber-200" }, "DM-Zentrale geschützt"),
-          React.createElement("p", { className: "text-xs text-slate-400" }, "Passwort eingeben (Standard: ", React.createElement("strong", null, "dm2024"), ")"),
-          React.createElement("form", { onSubmit: handleUnlockDm, className: "space-y-3" },
-            React.createElement("input", { type: "password", placeholder: "Masterpasswort...", value: dmPasswordInput, onChange: (e) => setDmPasswordInput(e.target.value), className: "w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-center text-sm text-white", autoFocus: true }),
-            React.createElement("button", { type: "submit", className: "w-full py-2.5 rounded-xl bg-amber-500 text-slate-950 font-bold text-sm" }, "Entsperren")
-          )
-        ),
-        role === "dm" && isDmUnlocked && React.createElement("div", { className: "space-y-6" },
-          React.createElement("div", { className: "bg-slate-900 border border-amber-500/30 rounded-2xl p-4 flex flex-wrap justify-between items-center gap-3" },
-            React.createElement("span", { className: "font-bold text-amber-200" }, "Spielleiter-Zentrale (Aktiv)"),
-            React.createElement("div", { className: "flex flex-wrap gap-2" },
-              pendingRequests.length > 0 && React.createElement("button", { onClick: () => setShowApprovalModal(true), className: "px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-xs text-white font-bold flex items-center gap-1.5" },
-                React.createElement(Bell, { className: "w-3.5 h-3.5" }), ` Genehmigungen (${pendingRequests.length})`
+            React.createElement("div", { className: "bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4" },
+              React.createElement("h2", { className: "text-lg font-bold text-white flex items-center gap-2" },
+                React.createElement(Compass, { className: "w-5 h-5 text-emerald-400" }), " Lebensstil"
               ),
-              React.createElement("button", { onClick: handleExportJson, className: "px-3 py-1.5 rounded bg-slate-800 text-xs text-white" }, "JSON Export"),
-              React.createElement("button", { onClick: handleLockDm, className: "px-3 py-1.5 rounded bg-amber-600 text-xs text-slate-950 font-bold" }, "Sperren")
+              React.createElement("div", { className: "p-3.5 rounded-xl bg-emerald-950/20 border border-emerald-500/30" },
+                React.createElement("span", { className: "text-xs text-slate-400 block" }, "Aktueller Status"),
+                React.createElement("span", { className: "text-base font-bold text-white" }, currentLifestyleObj.name),
+                React.createElement("div", { className: "text-xs text-amber-400 mt-1" }, formatCurrency(currentLifestyleCostCp, standard), " / Woche")
+              ),
+              React.createElement("p", { className: "text-xs text-slate-300" }, currentLifestyleObj.description)
             )
           ),
-          pendingRequests.length > 0 && React.createElement("div", { className: "bg-emerald-950/25 border border-emerald-500/40 rounded-2xl p-4 space-y-3" },
-            React.createElement("div", { className: "flex justify-between items-center" },
-              React.createElement("h3", { className: "text-sm font-bold text-emerald-300" }, "Offene Genehmigungsanfragen (", pendingRequests.length, ")"),
-              React.createElement("button", { onClick: () => setShowApprovalModal(true), className: "text-xs text-amber-300 underline hover:text-amber-200" }, "Als Popup öffnen")
-            ),
-            React.createElement("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-3" },
-              pendingRequests.map((req) => React.createElement("div", { key: req.id, className: "p-3.5 rounded-xl bg-slate-950 border border-slate-800 flex flex-col justify-between gap-2" },
-                React.createElement("div", { className: "space-y-1" },
-                  React.createElement("div", { className: "flex items-center justify-between gap-2" },
-                    React.createElement("div", { className: "flex items-center gap-1.5" },
-                      React.createElement("span", { className: "px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[10px] font-semibold" }, req.categoryLabel || "Anfrage"),
-                      React.createElement("span", { className: "text-xs font-bold text-white" }, req.charName)
-                    ),
-                    React.createElement("span", { className: "font-mono text-xs font-bold text-amber-300" }, req.amountDisplay || (req.payoutCp ? `+${formatCurrency(req.payoutCp, standard)}` : ""))
-                  ),
-                  React.createElement("div", { className: "text-xs font-semibold text-slate-200" }, req.title),
-                  req.details && React.createElement("div", { className: "text-[11px] text-slate-400" }, req.details)
-                ),
-                React.createElement("div", { className: "flex justify-end gap-1.5 pt-1 border-t border-slate-800/80" },
-                  React.createElement("button", { onClick: () => handleRejectRequest(req), className: "px-2.5 py-1 rounded bg-red-900 hover:bg-red-800 text-white text-xs flex items-center gap-1" },
-                    React.createElement(X, { className: "w-3.5 h-3.5" }), " Ablehnen"
-                  ),
-                  React.createElement("button", { onClick: () => handleApproveRequest(req), className: "px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1" },
-                    React.createElement(Check, { className: "w-3.5 h-3.5" }), " Genehmigen"
-                  )
-                )
-              ))
-            )
-          ),
-          dmPanel
+          playerFinancePanel
         )
+      ) :
+      // D) Reiter "Finanzen & Shops" – DM-MODUS
+      React.createElement("div", { className: "space-y-6" },
+        pendingRequests.length > 0 && React.createElement("div", { className: "bg-emerald-950/25 border border-emerald-500/40 rounded-2xl p-4 space-y-3" },
+          React.createElement("div", { className: "flex justify-between items-center" },
+            React.createElement("h3", { className: "text-sm font-bold text-emerald-300" }, "Offene Finanz-Anfragen (", pendingRequests.length, ")"),
+            React.createElement("button", { onClick: () => setShowApprovalModal(true), className: "text-xs text-amber-300 underline hover:text-amber-200" }, "Als Popup öffnen")
+          ),
+          React.createElement("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-3" },
+            pendingRequests.map((req) => React.createElement("div", { key: req.id, className: "p-3.5 rounded-xl bg-slate-950 border border-slate-800 flex flex-col justify-between gap-2" },
+              React.createElement("div", { className: "space-y-1" },
+                React.createElement("div", { className: "flex items-center justify-between gap-2" },
+                  React.createElement("div", { className: "flex items-center gap-1.5" },
+                    React.createElement("span", { className: "px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[10px] font-semibold" }, req.categoryLabel || "Anfrage"),
+                    React.createElement("span", { className: "text-xs font-bold text-white" }, req.charName)
+                  ),
+                  React.createElement("span", { className: "font-mono text-xs font-bold text-amber-300" }, req.amountDisplay || (req.payoutCp ? `+${formatCurrency(req.payoutCp, standard)}` : ""))
+                ),
+                React.createElement("div", { className: "text-xs font-semibold text-slate-200" }, req.title),
+                req.details && React.createElement("div", { className: "text-[11px] text-slate-400" }, req.details)
+              ),
+              React.createElement("div", { className: "flex justify-end gap-1.5 pt-1 border-t border-slate-800/80" },
+                React.createElement("button", { onClick: () => handleRejectRequest(req), className: "px-2.5 py-1 rounded bg-red-900 hover:bg-red-800 text-white text-xs flex items-center gap-1" },
+                  React.createElement(X, { className: "w-3.5 h-3.5" }), " Ablehnen"
+                ),
+                React.createElement("button", { onClick: () => handleApproveRequest(req), className: "px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1" },
+                  React.createElement(Check, { className: "w-3.5 h-3.5" }), " Genehmigen"
+                )
+              )
+            ))
+          )
+        ),
+        dmFinancePanel
       )
     )
   );
@@ -1987,3 +2223,9 @@ window.__appMounted = true;
     </script>
 </body>
 </html>
+'''
+
+with open("dnd-kampagnen-manager.html", "w", encoding="utf-8") as f:
+    f.write(html_code)
+
+print("Saved successfully. Bytes:", len(html_code.encode("utf-8")))
