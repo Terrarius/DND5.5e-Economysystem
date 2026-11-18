@@ -3582,3 +3582,9 @@ window.__appMounted = true;
     </script>
 </body>
 </html>
+'''
+
+with open("index.html", "w", encoding="utf-8") as f:
+    f.write(html_content)
+
+print("Erfolgreich gespeichert:", len(html_content.encode("utf-8")), "Bytes")
