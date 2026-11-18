@@ -1,4 +1,4 @@
-html_code = '''<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="de">
 <head>
     <meta charset="UTF-8">
@@ -56,13 +56,35 @@ const FIREBASE_CONFIG = {
 
 const FIREBASE_ROOT = "dnd55/state";
 const FIREBASE_ENABLED = !!FIREBASE_CONFIG.databaseURL;
-const SYNC_KEYS = ["characters", "shopTabs", "logs", "pendingRequests", "standard", "campaignMeta"];
+const SYNC_KEYS = ["characters", "shopTabs", "logs", "pendingRequests", "standard", "campaignMeta", "bagOfHolding"];
+
+const normalizeInventoryItem = (it) => ({
+  id: it.id || ("inv_" + Math.random().toString(36).slice(2, 8)),
+  name: it.name || "Unbekannter Gegenstand",
+  weight: Math.max(0, parseFloat(it.weight) || 0),
+  qty: Math.max(1, parseInt(it.qty, 10) || 1),
+  isMagical: !!it.isMagical,
+  requiresAttunement: !!it.requiresAttunement,
+  isAttuned: !!(it.requiresAttunement && it.isAttuned),
+  chargesMax: Math.max(0, parseInt(it.chargesMax, 10) || 0),
+  chargesCurrent: Math.max(0, Math.min(Math.max(0, parseInt(it.chargesMax, 10) || 0), parseInt(it.chargesCurrent, 10) || 0)),
+  description: it.description || "",
+  category: it.category || "gear"
+});
+
 const SYNC_NORMALIZERS = {
   characters: (v) => (v || []).map((c) => ({
     ...c,
+    strength: Math.max(1, Math.min(30, parseInt(c.strength, 10) || 10)),
     coins: { pp: 0, gp: 0, sp: 0, cp: 0, ...c.coins || {} },
-    upgrades: c.upgrades || []
+    upgrades: c.upgrades || [],
+    inventory: (c.inventory || []).map(normalizeInventoryItem)
   })),
+  bagOfHolding: (v) => ({
+    enabled: v && typeof v.enabled === "boolean" ? v.enabled : true,
+    maxCapacityKg: v && v.maxCapacityKg ? parseFloat(v.maxCapacityKg) : 250,
+    items: (v && Array.isArray(v.items) ? v.items : []).map(normalizeInventoryItem)
+  }),
   shopTabs: (v) => (v || []).map((t) => ({ ...t, items: t.items || [] })),
   logs: (v) => v || [],
   pendingRequests: (v) => v || [],
@@ -71,6 +93,7 @@ const SYNC_NORMALIZERS = {
     campaignName: "D&D 5.5e Kampagne",
     currentDate: "1. Hammer, 1492 TZ",
     sessionNumber: 1,
+    useVariantEncumbrance: false,
     ...(v || {})
   })
 };
@@ -132,6 +155,13 @@ const BookOpen = makeIcon("BookOpen", "Users");
 const Hammer = makeIcon("Hammer", "Wrench");
 const Bell = makeIcon("Bell");
 const Settings = makeIcon("Settings", "Sliders");
+const Sparkles = makeIcon("Sparkles", "Wand2");
+const Send = makeIcon("Send", "ArrowRight");
+const Plus = makeIcon("Plus");
+const Trash2 = makeIcon("Trash2", "Trash");
+const Package = makeIcon("Package", "Box");
+const Zap = makeIcon("Zap", "BatteryCharging");
+const Eye = makeIcon("Eye");
 
 const CAMPAIGN_TABS = [
   { id: "finances", label: "Finanzen & Shops", Icon: Coins },
@@ -144,21 +174,6 @@ const CAMPAIGN_TABS = [
 ];
 
 const PLACEHOLDER_INFO = {
-  inventory: {
-    title: "Inventar, Traglast & Magische Einstimmung (Attunement)",
-    playerSubtitle: "Deine persönliche Ausrüstung, Traglast & eingestimmte Gegenstände",
-    dmSubtitle: "DM-Verwaltung: Ausrüstung vergeben, Gegenstände prüfen & Einstimmungen verwalten",
-    playerPoints: [
-      "Einsicht in dein persönliches Inventar inkl. automatischer Traglast-Berechnung (Stärke & Münzgewicht).",
-      "Verwaltung deiner 3 Einstimmungs-Slots (Attunement) für magische Gegenstände.",
-      "Übersicht über Waffen (inkl. Weapon Masteries), Rüstungen und Verbrauchsgüter."
-    ],
-    dmPoints: [
-      "Gegenstände und Beute direkt an einzelne Spieler oder die Gruppenkasse vergeben.",
-      "Magische Gegenstände anlegen, identifizieren und Einstimmungen der Gruppe einsehen.",
-      "Traglast- und Ausrüstungs-Übersicht über alle Charaktere hinweg."
-    ]
-  },
   bastion: {
     title: "Bastions-Manager (D&D 5.5e / 2024 DMG)",
     playerSubtitle: "Eure Bastion, Spezialeinrichtungen & Bastions-Befehle",
@@ -315,46 +330,196 @@ const INITIAL_CHARACTERS = [
     name: "Gruppenkasse (Expedition)",
     role: "Gemeinsamer Schatz & Wagen",
     isParty: true,
+    strength: 20,
     password: "1234",
     lifestyle: "modest",
     coins: { pp: 0, gp: 0, sp: 0, cp: 0 },
     bankNotesGp: 0,
-    upgrades: []
+    upgrades: [],
+    inventory: [
+      {
+        id: "inv_party_1",
+        name: "Expeditionszelt & Kochgeschirr",
+        weight: 12.0,
+        qty: 1,
+        isMagical: false,
+        requiresAttunement: false,
+        isAttuned: false,
+        chargesMax: 0,
+        chargesCurrent: 0,
+        description: "Großes Lagerzelt für 4 Personen inkl. Gusseisenkessel."
+      },
+      {
+        id: "inv_party_2",
+        name: "Kletterseil (Hanf, 15m) & Enterhaken",
+        weight: 6.5,
+        qty: 2,
+        isMagical: false,
+        requiresAttunement: false,
+        isAttuned: false,
+        chargesMax: 0,
+        chargesCurrent: 0,
+        description: "Robustes Seil für Abseilmanöver im Gruppenwagen."
+      }
+    ]
   },
   {
     id: "char_1",
     name: "Thrain Eisenfaust",
     role: "Zwergischer Kämpfer (Stufe 5)",
     isParty: false,
+    strength: 17,
     password: "1234",
     lifestyle: "modest",
     coins: { pp: 0, gp: 0, sp: 0, cp: 0 },
     bankNotesGp: 0,
-    upgrades: []
+    upgrades: [],
+    inventory: [
+      {
+        id: "inv_c1_1",
+        name: "Kriegshammer +1 (Runenstahl)",
+        weight: 1.0,
+        qty: 1,
+        isMagical: true,
+        requiresAttunement: false,
+        isAttuned: false,
+        chargesMax: 0,
+        chargesCurrent: 0,
+        description: "1W8 (1W10 vielseitig) Wuchtschaden. Weapon Mastery: Push (Stoßen)."
+      },
+      {
+        id: "inv_c1_2",
+        name: "Kettenpanzer (Chain Mail)",
+        weight: 27.5,
+        qty: 1,
+        isMagical: false,
+        requiresAttunement: false,
+        isAttuned: false,
+        chargesMax: 0,
+        chargesCurrent: 0,
+        description: "RK 16 (Schwere Rüstung, Nachteil auf Heimlichkeit)."
+      },
+      {
+        id: "inv_c1_3",
+        name: "Gürtel der Zwergenstärke (Belt of Dwarvenkind)",
+        weight: 0.5,
+        qty: 1,
+        isMagical: true,
+        requiresAttunement: true,
+        isAttuned: true,
+        chargesMax: 0,
+        chargesCurrent: 0,
+        description: "+2 Konstitution (max. 20), Vorteil auf Überzeugen bei Zwergen, Giftresistenz."
+      }
+    ]
   },
   {
     id: "char_2",
     name: "Lyra Sternenweber",
     role: "Elfische Magierin (Stufe 5)",
     isParty: false,
+    strength: 8,
     password: "1234",
     lifestyle: "wealthy",
     coins: { pp: 0, gp: 0, sp: 0, cp: 0 },
     bankNotesGp: 0,
-    upgrades: []
+    upgrades: [],
+    inventory: [
+      {
+        id: "inv_c2_1",
+        name: "Zauberbuch (Ledergebunden)",
+        weight: 1.5,
+        qty: 1,
+        isMagical: false,
+        requiresAttunement: false,
+        isAttuned: false,
+        chargesMax: 0,
+        chargesCurrent: 0,
+        description: "Enthält alle vorbereiteten und ritualisierten Magierzauber."
+      },
+      {
+        id: "inv_c2_2",
+        name: "Zauberstab der Magischen Geschosse",
+        weight: 0.5,
+        qty: 1,
+        isMagical: true,
+        requiresAttunement: false,
+        isAttuned: false,
+        chargesMax: 7,
+        chargesCurrent: 7,
+        description: "Verbraucht 1–7 Ladungen für Magisches Geschoss (1W6+1 Ladungen bei Morgendämmerung)."
+      },
+      {
+        id: "inv_c2_3",
+        name: "Umhang des Schutzes (Cloak of Protection)",
+        weight: 0.5,
+        qty: 1,
+        isMagical: true,
+        requiresAttunement: true,
+        isAttuned: true,
+        chargesMax: 0,
+        chargesCurrent: 0,
+        description: "+1 auf Rüstungsklasse und alle Rettungswürfe."
+      }
+    ]
   },
   {
     id: "char_3",
     name: "Vesper Schattenklinge",
     role: "Halbling-Schurke (Stufe 5)",
     isParty: false,
+    strength: 10,
     password: "1234",
     lifestyle: "wretched",
     coins: { pp: 0, gp: 0, sp: 0, cp: 0 },
     bankNotesGp: 0,
-    upgrades: []
+    upgrades: [],
+    inventory: [
+      {
+        id: "inv_c3_1",
+        name: "Kurzschwert der Wounding-Klinge",
+        weight: 1.0,
+        qty: 1,
+        isMagical: true,
+        requiresAttunement: true,
+        isAttuned: true,
+        chargesMax: 0,
+        chargesCurrent: 0,
+        description: "1W6 Stichschaden (Finesse, Leicht). Weapon Mastery: Vex (Bedrängen). Verursacht nekrotische Blutung."
+      },
+      {
+        id: "inv_c3_2",
+        name: "Beschlagene Lederrüstung (Studded Leather)",
+        weight: 6.5,
+        qty: 1,
+        isMagical: false,
+        requiresAttunement: false,
+        isAttuned: false,
+        chargesMax: 0,
+        chargesCurrent: 0,
+        description: "RK 12 + GES-Modifikator (Leichte Rüstung)."
+      }
+    ]
   }
 ];
+const INITIAL_BAG_OF_HOLDING = {
+  enabled: true,
+  maxCapacityKg: 250,
+  items: [
+    {
+      id: "boh_1",
+      name: "Heiltrank (Potion of Healing)",
+      weight: 0.25,
+      qty: 2,
+      isMagical: true,
+      requiresAttunement: false,
+      isAttuned: false,
+      chargesMax: 0,
+      chargesCurrent: 0,
+      description: "Stellt 2W4 + 2 TP wieder her."
+    }
+  ]
+};
 const INITIAL_LOGS = [];
 
 function getTotalCopper(coins) {
@@ -390,23 +555,94 @@ function getItemCostCp(item, standard) {
 }
 function getCoinWeight(coins) {
   const count = (coins.pp || 0) + (coins.gp || 0) + (coins.sp || 0) + (coins.cp || 0);
-  const kg = count / 50 * 0.5;
-  return { count, kg: kg.toFixed(2) };
+  const kgNum = count / 50 * 0.5;
+  return { count, kgNum, kg: kgNum.toFixed(2) };
+}
+function getInventoryItemsWeight(items) {
+  return (items || []).reduce((acc, it) => acc + (parseFloat(it.weight) || 0) * (parseInt(it.qty, 10) || 1), 0);
+}
+function getEncumbranceStats(char, useVariant = false) {
+  const str = Math.max(1, parseInt(char.strength, 10) || 10);
+  const coinKg = getCoinWeight(char.coins || {}).kgNum;
+  const gearKg = getInventoryItemsWeight(char.inventory || []);
+  const totalKg = coinKg + gearKg;
+
+  // D&D 5.5e (2024) Regeln: Tragkraft = STR * 7.5 kg (15 lb), Stoßen/Ziehen/Heben = STR * 15 kg (30 lb)
+  // Optional PHB Variant Encumbrance: Belastet ab STR * 2.5 kg (-3m Bewegung), Schwer belastet ab STR * 5 kg (-6m Bewegung & Nachteil)
+  const carryMaxKg = str * 7.5;
+  const pushDragMaxKg = str * 15;
+  const variantEncumberedKg = str * 2.5;
+  const variantHeavilyKg = str * 5.0;
+
+  let status = "normal";
+  let statusLabel = "Unbelastet";
+  let speedPenalty = "Kein Malus";
+  let barColor = "bg-emerald-500";
+  let textColor = "text-emerald-400";
+
+  if (totalKg > pushDragMaxKg) {
+    status = "overloaded";
+    statusLabel = "Überladen (Bewegungsunfähig)";
+    speedPenalty = "Bewegung 0 m (über Hebegrenze!)";
+    barColor = "bg-red-600";
+    textColor = "text-red-400";
+  } else if (totalKg > carryMaxKg) {
+    status = "drag_only";
+    statusLabel = "Über Tragkraft (Nur Stoßen/Ziehen)";
+    speedPenalty = "Bewegung auf 1,5 m (5 Fuß) reduziert";
+    barColor = "bg-red-500";
+    textColor = "text-red-400";
+  } else if (useVariant && totalKg > variantHeavilyKg) {
+    status = "heavily_encumbered";
+    statusLabel = "Schwer belastet (Variante)";
+    speedPenalty = "-6 m (-20 Fuß) Bewegung & Nachteil auf STR/GES/KON";
+    barColor = "bg-amber-500";
+    textColor = "text-amber-300";
+  } else if (useVariant && totalKg > variantEncumberedKg) {
+    status = "encumbered";
+    statusLabel = "Belastet (Variante)";
+    speedPenalty = "-3 m (-10 Fuß) Bewegung";
+    barColor = "bg-amber-400";
+    textColor = "text-amber-300";
+  } else if (totalKg >= carryMaxKg * 0.75) {
+    status = "near_limit";
+    statusLabel = "Gut beladen (> 75 %)";
+    speedPenalty = "Kein Malus (nahe Tragkraftgrenze)";
+    barColor = "bg-amber-400";
+    textColor = "text-amber-300";
+  }
+
+  const pctOfCarry = carryMaxKg > 0 ? Math.min(100, (totalKg / carryMaxKg) * 100) : 0;
+
+  return {
+    str,
+    coinKg,
+    gearKg,
+    totalKg,
+    carryMaxKg,
+    pushDragMaxKg,
+    variantEncumberedKg,
+    variantHeavilyKg,
+    status,
+    statusLabel,
+    speedPenalty,
+    barColor,
+    textColor,
+    pctOfCarry
+  };
 }
 
 function App() {
   // Authentifizierungs- & Rollen-Status VOR allen Reitern
-  // authMode: null (nicht eingeloggt) | "player" | "dm"
   const [authMode, setAuthMode] = useState(null);
-  const [loginRoleSelect, setLoginRoleSelect] = useState("player"); // Tab im Login-Screen: "player" | "dm"
+  const [loginRoleSelect, setLoginRoleSelect] = useState("player");
   const [loggedInPlayerId, setLoggedInPlayerId] = useState(null);
   const [loginNameInput, setLoginNameInput] = useState("");
   const [loginPasswordInput, setLoginPasswordInput] = useState("");
   const [dmPassword, setDmPassword] = useState("dm2024");
   const [dmPasswordInput, setDmPasswordInput] = useState("");
 
-  // Haupt-Navigation (wird erst nach erfolgreichem Login angezeigt)
-  // "finances" | "inventory" | "bastion" | "factions" | "quests" | "lore" | "downtime" | "__settings" (nur DM)
+  // Haupt-Navigation
   const [mainSection, setMainSection] = useState("finances");
 
   // Globale Kampagnendaten
@@ -414,9 +650,11 @@ function App() {
   const [campaignMeta, setCampaignMeta] = useState({
     campaignName: "D&D 5.5e Kampagne",
     currentDate: "1. Hammer, 1492 TZ",
-    sessionNumber: 1
+    sessionNumber: 1,
+    useVariantEncumbrance: false
   });
   const [characters, setCharacters] = useState(INITIAL_CHARACTERS);
+  const [bagOfHolding, setBagOfHolding] = useState(INITIAL_BAG_OF_HOLDING);
   const [activeCharId, setActiveCharId] = useState(INITIAL_CHARACTERS[1].id);
   const [shopTabs, setShopTabs] = useState(INITIAL_SHOP_TABS);
   const [logs, setLogs] = useState(INITIAL_LOGS);
@@ -450,6 +688,35 @@ function App() {
   const [lootCoinUnit, setLootCoinUnit] = useState("sp");
   const [lootDescription, setLootDescription] = useState("");
 
+  // Spieler- & DM-Formulare (Modul 1: Inventar, Traglast & Attunement)
+  const [playerInvSubTab, setPlayerInvSubTab] = useState("personal"); // "personal" | "party_wagon" | "bag_of_holding"
+  const [invSearchQuery, setInvSearchQuery] = useState("");
+  const [invTransferTargets, setInvTransferTargets] = useState({});
+  const [invTransferQtys, setInvTransferQtys] = useState({});
+  const [playerNewItemForm, setPlayerNewItemForm] = useState({
+    name: "",
+    weight: "0.5",
+    qty: "1",
+    isMagical: false,
+    requiresAttunement: false,
+    chargesMax: "0",
+    description: ""
+  });
+
+  // DM Inventar-Zentrale State
+  const [dmInvSubTab, setDmInvSubTab] = useState("create_grant"); // "create_grant" | "party_inspect"
+  const [dmInvTarget, setDmInvTarget] = useState("char_1");
+  const [dmItemForm, setDmItemForm] = useState({
+    name: "",
+    weight: "0.5",
+    qty: "1",
+    isMagical: false,
+    requiresAttunement: false,
+    chargesMax: "0",
+    description: ""
+  });
+  const [dmInspectCharId, setDmInspectCharId] = useState("all");
+
   // DM-Formulare (Finanzen & Allgemeine Einstellungen)
   const [dmTargetId, setDmTargetId] = useState("all");
   const [dmCustomTitle, setDmCustomTitle] = useState("");
@@ -458,6 +725,7 @@ function App() {
   const [dmCustomMode, setDmCustomMode] = useState("deduct");
   const [newCharName, setNewCharName] = useState("");
   const [newCharRole, setNewCharRole] = useState("");
+  const [newCharStrength, setNewCharStrength] = useState("10");
   const [newCharPassword, setNewCharPassword] = useState("1234");
   const [newDmPasswordInput, setNewDmPasswordInput] = useState("");
   const [selectedShopTabId, setSelectedShopTabId] = useState(INITIAL_SHOP_TABS[0].id);
@@ -485,7 +753,8 @@ function App() {
       const saved = localStorage.getItem("dnd55_economy_state_v3");
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed.characters) setCharacters(parsed.characters);
+        if (parsed.characters) setCharacters(SYNC_NORMALIZERS.characters(parsed.characters));
+        if (parsed.bagOfHolding) setBagOfHolding(SYNC_NORMALIZERS.bagOfHolding(parsed.bagOfHolding));
         if (parsed.shopTabs && parsed.shopTabs.length > 0) {
           setShopTabs(parsed.shopTabs);
           setPlayerFinanceTab(parsed.shopTabs[0].id);
@@ -494,7 +763,7 @@ function App() {
         if (parsed.logs) setLogs(parsed.logs);
         if (parsed.pendingRequests) setPendingRequests(parsed.pendingRequests);
         if (parsed.standard) setStandard(parsed.standard);
-        if (parsed.campaignMeta) setCampaignMeta(parsed.campaignMeta);
+        if (parsed.campaignMeta) setCampaignMeta(SYNC_NORMALIZERS.campaignMeta(parsed.campaignMeta));
         if (parsed.dmPassword) setDmPassword(parsed.dmPassword);
       }
       const params = new URLSearchParams(window.location.search);
@@ -545,6 +814,7 @@ function App() {
           }
         });
         if (next.characters) setCharacters(next.characters);
+        if (next.bagOfHolding) setBagOfHolding(next.bagOfHolding);
         if (next.shopTabs && next.shopTabs.length > 0) setShopTabs(next.shopTabs);
         if (next.logs) setLogs(next.logs);
         if (next.pendingRequests) setPendingRequests(next.pendingRequests);
@@ -571,13 +841,13 @@ function App() {
     try {
       localStorage.setItem(
         "dnd55_economy_state_v3",
-        JSON.stringify({ characters, shopTabs, logs, pendingRequests, standard, campaignMeta, dmPassword })
+        JSON.stringify({ characters, bagOfHolding, shopTabs, logs, pendingRequests, standard, campaignMeta, dmPassword })
       );
     } catch (e) {
       console.error("Fehler beim Speichern:", e);
     }
     if (syncStatus !== "live" || !dbRef.current) return;
-    const values = { characters, shopTabs, logs, pendingRequests, standard, campaignMeta };
+    const values = { characters, bagOfHolding, shopTabs, logs, pendingRequests, standard, campaignMeta };
     const updates = {};
     SYNC_KEYS.forEach((k) => {
       const json = JSON.stringify(values[k]);
@@ -592,7 +862,7 @@ function App() {
         setSyncStatus("error");
       });
     }
-  }, [loaded, syncStatus, characters, shopTabs, logs, pendingRequests, standard, campaignMeta, dmPassword]);
+  }, [loaded, syncStatus, characters, bagOfHolding, shopTabs, logs, pendingRequests, standard, campaignMeta, dmPassword]);
 
   // Automatisches Öffnen des Genehmigungs-Popups in der DM-Zentrale bei neuen Anfragen
   useEffect(() => {
@@ -785,8 +1055,7 @@ function App() {
     }
   };
 
-  // --- SPIELER-AKTIONEN (Lösen ALLE eine Genehmigungsanfrage für die DM-Zentrale aus) ---
-
+  // --- SPIELER-AKTIONEN (FINANZEN) ---
   const handleManualExpense = () => {
     const val = parseInt(manualExpenseAmount, 10);
     if (!val || val <= 0) {
@@ -833,9 +1102,10 @@ function App() {
       charId: activeChar.id,
       charName: activeChar.name,
       title: `Kauf: ${item.name}`,
-      details: `${item.desc || "Händlerware"} | Preis: ${formatCurrency(costCp, standard)}${item.isUpgrade ? " (Charakter-Upgrade)" : ""}`,
+      details: `${item.desc || "Händlerware"} | Preis: ${formatCurrency(costCp, standard)}${item.isUpgrade ? " (Charakter-Upgrade)" : " (wird ins Inventar gelegt)"}`,
       deltaCp: -costCp,
       itemName: item.name,
+      itemDesc: item.desc || "",
       isUpgrade: !!item.isUpgrade,
       amountDisplay: `-${formatCurrency(costCp, standard)}`,
       timestamp: new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })
@@ -990,6 +1260,303 @@ function App() {
     notify("Verkaufsanfrage an DM gesendet!");
   };
 
+  // --- MODUL 1: INVENTAR, TRAGLAST & ATTUNEMENT LOGIK ---
+  const mergeOrAppendItem = (list, newItem) => {
+    const norm = normalizeInventoryItem(newItem);
+    // Nur nicht-einzigartige / nicht-eingestimmte identische Gegenstände ohne eigene Ladungen stapeln
+    if (!norm.requiresAttunement && norm.chargesMax === 0) {
+      const existingIdx = list.findIndex(
+        (x) =>
+          x.name.trim().toLowerCase() === norm.name.trim().toLowerCase() &&
+          Math.abs((parseFloat(x.weight) || 0) - norm.weight) < 0.001 &&
+          !!x.isMagical === norm.isMagical &&
+          !x.isAttuned &&
+          (x.chargesMax || 0) === 0
+      );
+      if (existingIdx !== -1) {
+        const copy = list.slice();
+        copy[existingIdx] = {
+          ...copy[existingIdx],
+          qty: (parseInt(copy[existingIdx].qty, 10) || 1) + norm.qty
+        };
+        return copy;
+      }
+    }
+    return [...list, norm];
+  };
+
+  const handleToggleAttunement = (charId, itemId) => {
+    const targetChar = characters.find((c) => c.id === charId);
+    if (!targetChar) return;
+    const item = (targetChar.inventory || []).find((i) => i.id === itemId);
+    if (!item || !item.requiresAttunement) return;
+
+    if (!item.isAttuned) {
+      const currentAttunedCount = (targetChar.inventory || []).filter((i) => i.requiresAttunement && i.isAttuned).length;
+      if (currentAttunedCount >= 3) {
+        notify("Maximal 3 eingestimmte Gegenstände möglich! Löse zuerst eine bestehende Einstimmung.", "error");
+        return;
+      }
+      setCharacters((prev) => prev.map((c) => {
+        if (c.id !== charId) return c;
+        return {
+          ...c,
+          inventory: (c.inventory || []).map((it) => it.id === itemId ? { ...it, isAttuned: true } : it)
+        };
+      }));
+      addLog(targetChar.name, "inventory", `Eingestimmt: ${item.name}`, "Attunement +1", authMode === "dm" ? "DM" : "Spieler");
+      notify(`Auf „${item.name}“ eingestimmt (${currentAttunedCount + 1}/3 Slots).`);
+    } else {
+      setCharacters((prev) => prev.map((c) => {
+        if (c.id !== charId) return c;
+        return {
+          ...c,
+          inventory: (c.inventory || []).map((it) => it.id === itemId ? { ...it, isAttuned: false } : it)
+        };
+      }));
+      addLog(targetChar.name, "inventory", `Einstimmung gelöst: ${item.name}`, "Attunement -1", authMode === "dm" ? "DM" : "Spieler");
+      notify(`Einstimmung auf „${item.name}“ gelöst.`);
+    }
+  };
+
+  const handleAdjustItemCharges = (sourceKind, charId, itemId, delta) => {
+    if (sourceKind === "bag") {
+      setBagOfHolding((prev) => ({
+        ...prev,
+        items: (prev.items || []).map((it) => {
+          if (it.id !== itemId) return it;
+          const next = Math.max(0, Math.min(it.chargesMax || 0, (it.chargesCurrent || 0) + delta));
+          return { ...it, chargesCurrent: next };
+        })
+      }));
+    } else {
+      setCharacters((prev) => prev.map((c) => {
+        if (c.id !== charId) return c;
+        return {
+          ...c,
+          inventory: (c.inventory || []).map((it) => {
+            if (it.id !== itemId) return it;
+            const next = Math.max(0, Math.min(it.chargesMax || 0, (it.chargesCurrent || 0) + delta));
+            return { ...it, chargesCurrent: next };
+          })
+        };
+      }));
+    }
+  };
+
+  const handleAdjustItemQty = (sourceKind, charId, itemId, delta) => {
+    if (sourceKind === "bag") {
+      setBagOfHolding((prev) => ({
+        ...prev,
+        items: (prev.items || [])
+          .map((it) => it.id === itemId ? { ...it, qty: (it.qty || 1) + delta } : it)
+          .filter((it) => it.qty > 0)
+      }));
+    } else {
+      setCharacters((prev) => prev.map((c) => {
+        if (c.id !== charId) return c;
+        return {
+          ...c,
+          inventory: (c.inventory || [])
+            .map((it) => it.id === itemId ? { ...it, qty: (it.qty || 1) + delta } : it)
+            .filter((it) => it.qty > 0)
+        };
+      }));
+    }
+  };
+
+  const handleDeleteInventoryItem = (sourceKind, charId, item) => {
+    if (!window.confirm(`„${item.name}“ (${item.qty}x) wirklich aus dem Inventar entfernen?`)) return;
+    if (sourceKind === "bag") {
+      setBagOfHolding((prev) => ({
+        ...prev,
+        items: (prev.items || []).filter((it) => it.id !== item.id)
+      }));
+      addLog("Nimmervoller Beutel", "inventory", `Entfernt: ${item.name} (${item.qty}x)`, "-", authMode === "dm" ? "DM" : "Spieler");
+    } else {
+      const owner = characters.find((c) => c.id === charId);
+      setCharacters((prev) => prev.map((c) => c.id === charId ? { ...c, inventory: (c.inventory || []).filter((it) => it.id !== item.id) } : c));
+      addLog(owner ? owner.name : "Inventar", "inventory", `Entfernt: ${item.name} (${item.qty}x)`, "-", authMode === "dm" ? "DM" : "Spieler");
+    }
+    notify(`„${item.name}“ entfernt.`);
+  };
+
+  // Gegenstand zwischen Charakteren, Gruppenwagen & Nimmervollem Beutel verschieben
+  const handleTransferInventoryItem = (fromKind, fromCharId, item, toDestination, moveQtyRaw) => {
+    if (!item || !toDestination) return;
+    const maxQty = Math.max(1, parseInt(item.qty, 10) || 1);
+    const moveQty = Math.max(1, Math.min(maxQty, parseInt(moveQtyRaw, 10) || 1));
+
+    // Kapazitätsprüfung beim Nimmervollen Beutel (Standard 250 kg / 500 lb)
+    if (toDestination === "__bag_of_holding") {
+      const currentBagKg = getInventoryItemsWeight(bagOfHolding.items || []);
+      const addedKg = (parseFloat(item.weight) || 0) * moveQty;
+      const cap = bagOfHolding.maxCapacityKg || 250;
+      if (currentBagKg + addedKg > cap) {
+        notify(`Nimmervoller Beutel überladen! (${(currentBagKg + addedKg).toFixed(1)} / ${cap} kg – Beutel würde reißen!)`, "error");
+        return;
+      }
+    }
+
+    const movedItemCopy = normalizeInventoryItem({
+      ...item,
+      id: "inv_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+      qty: moveQty,
+      // Bei Besitzerwechsel erlischt eine bestehende Einstimmung automatisch nach D&D 5.5e Regeln
+      isAttuned: false
+    });
+
+    const sourceLabel = fromKind === "bag"
+      ? "Nimmervoller Beutel"
+      : (characters.find((c) => c.id === fromCharId) || {}).name || "Unbekannt";
+    const destLabel = toDestination === "__bag_of_holding"
+      ? "Nimmervoller Beutel"
+      : (characters.find((c) => c.id === toDestination) || {}).name || "Empfänger";
+
+    // 1. Aus Quelle entfernen / reduzieren
+    if (fromKind === "bag") {
+      setBagOfHolding((prev) => {
+        const reduced = (prev.items || [])
+          .map((it) => it.id === item.id ? { ...it, qty: it.qty - moveQty } : it)
+          .filter((it) => it.qty > 0);
+        return { ...prev, items: reduced };
+      });
+    } else {
+      setCharacters((prev) => prev.map((c) => {
+        if (c.id !== fromCharId) return c;
+        const reduced = (c.inventory || [])
+          .map((it) => it.id === item.id ? { ...it, qty: it.qty - moveQty } : it)
+          .filter((it) => it.qty > 0);
+        return { ...c, inventory: reduced };
+      }));
+    }
+
+    // 2. Zum Ziel hinzufügen
+    if (toDestination === "__bag_of_holding") {
+      setBagOfHolding((prev) => ({
+        ...prev,
+        items: mergeOrAppendItem(prev.items || [], movedItemCopy)
+      }));
+    } else {
+      setCharacters((prev) => prev.map((c) => {
+        if (c.id !== toDestination) return c;
+        return { ...c, inventory: mergeOrAppendItem(c.inventory || [], movedItemCopy) };
+      }));
+    }
+
+    addLog(
+      sourceLabel,
+      "inventory",
+      `Item-Übergabe: ${moveQty}× ${item.name} → ${destLabel}`,
+      `${((parseFloat(item.weight) || 0) * moveQty).toFixed(2)} kg`,
+      authMode === "dm" ? "DM" : "Spieler"
+    );
+    notify(`${moveQty}× „${item.name}“ an ${destLabel} übergeben.`);
+  };
+
+  // Spieler fügt eigenen Gegenstand hinzu (z. B. gefundene Alltagsausrüstung / Notiz)
+  const handlePlayerAddSelfItem = (e, targetKind, targetCharId) => {
+    e.preventDefault();
+    const name = playerNewItemForm.name.trim();
+    if (!name) {
+      notify("Bitte einen Gegenstandsnamen eingeben.", "error");
+      return;
+    }
+    const newItem = normalizeInventoryItem({
+      id: "inv_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+      name,
+      weight: parseFloat(playerNewItemForm.weight) || 0,
+      qty: Math.max(1, parseInt(playerNewItemForm.qty, 10) || 1),
+      isMagical: !!playerNewItemForm.isMagical,
+      requiresAttunement: !!(playerNewItemForm.isMagical && playerNewItemForm.requiresAttunement),
+      isAttuned: false,
+      chargesMax: Math.max(0, parseInt(playerNewItemForm.chargesMax, 10) || 0),
+      chargesCurrent: Math.max(0, parseInt(playerNewItemForm.chargesMax, 10) || 0),
+      description: playerNewItemForm.description.trim()
+    });
+
+    if (targetKind === "bag") {
+      const currentBagKg = getInventoryItemsWeight(bagOfHolding.items || []);
+      const addedKg = newItem.weight * newItem.qty;
+      const cap = bagOfHolding.maxCapacityKg || 250;
+      if (currentBagKg + addedKg > cap) {
+        notify(`Nimmervoller Beutel würde das Limit von ${cap} kg überschreiten!`, "error");
+        return;
+      }
+      setBagOfHolding((prev) => ({ ...prev, items: mergeOrAppendItem(prev.items || [], newItem) }));
+      addLog("Nimmervoller Beutel", "inventory", `Hinzugefügt: ${newItem.qty}× ${newItem.name}`, `${addedKg.toFixed(2)} kg`, "Spieler");
+    } else {
+      const targetChar = characters.find((c) => c.id === targetCharId);
+      setCharacters((prev) => prev.map((c) => c.id === targetCharId ? { ...c, inventory: mergeOrAppendItem(c.inventory || [], newItem) } : c));
+      addLog(targetChar ? targetChar.name : "Inventar", "inventory", `Hinzugefügt: ${newItem.qty}× ${newItem.name}`, `${(newItem.weight * newItem.qty).toFixed(2)} kg`, "Spieler");
+    }
+
+    setPlayerNewItemForm({
+      name: "",
+      weight: "0.5",
+      qty: "1",
+      isMagical: false,
+      requiresAttunement: false,
+      chargesMax: "0",
+      description: ""
+    });
+    notify(`„${newItem.name}“ hinzugefügt.`);
+  };
+
+  // DM erstellt Gegenstand / magische Beute und vergibt sie direkt
+  const handleDmCreateAndGrantItem = (e) => {
+    e.preventDefault();
+    const name = dmItemForm.name.trim();
+    if (!name) {
+      notify("Bitte einen Namen für den Gegenstand eingeben.", "error");
+      return;
+    }
+    const newItem = normalizeInventoryItem({
+      id: "inv_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+      name,
+      weight: parseFloat(dmItemForm.weight) || 0,
+      qty: Math.max(1, parseInt(dmItemForm.qty, 10) || 1),
+      isMagical: !!dmItemForm.isMagical,
+      requiresAttunement: !!(dmItemForm.isMagical && dmItemForm.requiresAttunement),
+      isAttuned: false,
+      chargesMax: Math.max(0, parseInt(dmItemForm.chargesMax, 10) || 0),
+      chargesCurrent: Math.max(0, parseInt(dmItemForm.chargesMax, 10) || 0),
+      description: dmItemForm.description.trim()
+    });
+
+    if (dmInvTarget === "__bag_of_holding") {
+      const currentBagKg = getInventoryItemsWeight(bagOfHolding.items || []);
+      const addedKg = newItem.weight * newItem.qty;
+      const cap = bagOfHolding.maxCapacityKg || 250;
+      if (currentBagKg + addedKg > cap) {
+        notify(`Warnung: Nimmervoller Beutel überschreitet ${cap} kg!`, "error");
+        return;
+      }
+      setBagOfHolding((prev) => ({ ...prev, items: mergeOrAppendItem(prev.items || [], newItem) }));
+      addLog("Nimmervoller Beutel", "inventory", `DM-Beute: ${newItem.qty}× ${newItem.name}`, `${addedKg.toFixed(2)} kg`, "DM");
+      notify(`„${newItem.name}“ in den Nimmervollen Beutel gelegt.`);
+    } else {
+      const targetChar = characters.find((c) => c.id === dmInvTarget);
+      if (!targetChar) {
+        notify("Ziel-Charakter nicht gefunden.", "error");
+        return;
+      }
+      setCharacters((prev) => prev.map((c) => c.id === targetChar.id ? { ...c, inventory: mergeOrAppendItem(c.inventory || [], newItem) } : c));
+      addLog(targetChar.name, "inventory", `DM-Beute erhalten: ${newItem.qty}× ${newItem.name}`, `${(newItem.weight * newItem.qty).toFixed(2)} kg`, "DM");
+      notify(`„${newItem.name}“ an ${targetChar.name} vergeben.`);
+    }
+
+    setDmItemForm({
+      name: "",
+      weight: "0.5",
+      qty: "1",
+      isMagical: false,
+      requiresAttunement: false,
+      chargesMax: "0",
+      description: ""
+    });
+  };
+
   // --- DM GENEHMIGUNG / ABLEHNUNG FÜR ALLE SPIELER-TRANSAKTIONEN ---
   const handleApproveRequest = (req) => {
     const targetChar = characters.find((c) => c.id === req.charId);
@@ -1023,7 +1590,18 @@ function App() {
       setCharacters((prev) => prev.map((c) => {
         if (c.id !== req.charId) return c;
         const newUpgrades = req.isUpgrade ? [...(c.upgrades || []), req.itemName] : c.upgrades;
-        return { ...c, coins: copperToCoins(getTotalCopper(c.coins) - costCp), upgrades: newUpgrades };
+        const nextInv = req.isUpgrade ? (c.inventory || []) : mergeOrAppendItem(c.inventory || [], {
+          name: req.itemName,
+          weight: 0.5,
+          qty: 1,
+          isMagical: /trank|potion|magisch|zauber/i.test(req.itemName),
+          requiresAttunement: false,
+          isAttuned: false,
+          chargesMax: 0,
+          chargesCurrent: 0,
+          description: req.itemDesc || "Im Shop erworben."
+        });
+        return { ...c, coins: copperToCoins(getTotalCopper(c.coins) - costCp), upgrades: newUpgrades, inventory: nextInv };
       }));
       addLog(
         targetChar.name,
@@ -1182,7 +1760,7 @@ function App() {
     setItemForm({ id: null, name: "", phbUnits: "", alwaysGold: false, isUpgrade: false, desc: "" });
   };
   const handleExportJson = () => {
-    const dataStr = JSON.stringify({ characters, shopTabs, logs, pendingRequests, standard, campaignMeta, dmPassword }, null, 2);
+    const dataStr = JSON.stringify({ characters, bagOfHolding, shopTabs, logs, pendingRequests, standard, campaignMeta, dmPassword }, null, 2);
     const blob = new Blob([dataStr], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -1195,6 +1773,7 @@ function App() {
   const currentLifestyleObj = LIFESTYLES.find((l) => l.id === activeChar.lifestyle) || LIFESTYLES[1];
   const currentLifestyleCostCp = standard === "silver" ? currentLifestyleObj.silverCostCp : currentLifestyleObj.goldCostCp;
   const activeWeight = getCoinWeight(activeChar.coins);
+  const activeEncumbrance = getEncumbranceStats(activeChar, campaignMeta.useVariantEncumbrance);
   const fmt = (cp) => formatCurrency(cp, standard);
 
   const inp = "px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-sm text-white focus:outline-none focus:border-amber-500";
@@ -1300,15 +1879,18 @@ function App() {
       name,
       role: newCharRole.trim() || "Abenteurer",
       isParty: false,
+      strength: Math.max(1, Math.min(30, parseInt(newCharStrength, 10) || 10)),
       password: newCharPassword || "1234",
       lifestyle: "modest",
       coins: { pp: 0, gp: 0, sp: 0, cp: 0 },
       bankNotesGp: 0,
-      upgrades: []
+      upgrades: [],
+      inventory: []
     };
     setCharacters((prev) => [...prev, nc]);
     setNewCharName("");
     setNewCharRole("");
+    setNewCharStrength("10");
     setNewCharPassword("1234");
     notify(`${name} wurde angelegt.`);
   };
@@ -1368,6 +1950,7 @@ function App() {
         const d = JSON.parse(reader.result);
         if (!Array.isArray(d.characters)) throw new Error("Format");
         setCharacters(SYNC_NORMALIZERS.characters(d.characters));
+        if (d.bagOfHolding) setBagOfHolding(SYNC_NORMALIZERS.bagOfHolding(d.bagOfHolding));
         if (d.shopTabs && d.shopTabs.length) setShopTabs(SYNC_NORMALIZERS.shopTabs(d.shopTabs));
         setLogs(d.logs || []);
         setPendingRequests(d.pendingRequests || []);
@@ -1384,6 +1967,7 @@ function App() {
   const handleResetAll = () => {
     if (!window.confirm("Wirklich ALLES zurücksetzen? Bei aktivem Live-Sync gilt das für alle Geräte.")) return;
     setCharacters(INITIAL_CHARACTERS);
+    setBagOfHolding(INITIAL_BAG_OF_HOLDING);
     setShopTabs(INITIAL_SHOP_TABS);
     setLogs([]);
     setPendingRequests([]);
@@ -1525,6 +2109,774 @@ function App() {
       ))
     )
   );
+
+  // =========================================================================
+  // MODUL 1: SPIELER-ANSICHT ("Inventar, Traglast & Attunement")
+  // =========================================================================
+  const renderPlayerInventoryModule = () => {
+    const targetChar = loggedInPlayer || activeChar;
+    if (!targetChar) return null;
+
+    const enc = getEncumbranceStats(targetChar, campaignMeta.useVariantEncumbrance);
+    const attunedItems = (targetChar.inventory || []).filter((it) => it.requiresAttunement && it.isAttuned);
+    const attunementSlots = [0, 1, 2].map((idx) => attunedItems[idx] || null);
+
+    // Bestimme aktiven Inventar-Container ("personal" | "party_wagon" | "bag_of_holding")
+    const isBagView = playerInvSubTab === "bag_of_holding";
+    const isPartyWagonView = playerInvSubTab === "party_wagon" && !!partyChar;
+    const containerOwnerChar = isPartyWagonView ? partyChar : targetChar;
+    const containerItems = isBagView ? (bagOfHolding.items || []) : (containerOwnerChar.inventory || []);
+
+    const filteredItems = containerItems.filter((it) => {
+      if (!invSearchQuery.trim()) return true;
+      const q = invSearchQuery.trim().toLowerCase();
+      return (it.name || "").toLowerCase().includes(q) || (it.description || "").toLowerCase().includes(q);
+    });
+
+    // Ziele für Item-Übergabe Dropdown
+    const buildTransferOptions = (currentKind, currentOwnerId) => {
+      const opts = [];
+      characters.forEach((c) => {
+        if (currentKind === "char" && c.id === currentOwnerId) return;
+        opts.push({
+          value: c.id,
+          label: c.isParty ? `Gruppenwagen (${c.name})` : c.name
+        });
+      });
+      if (bagOfHolding.enabled && currentKind !== "bag") {
+        opts.push({ value: "__bag_of_holding", label: "Nimmervoller Beutel (Bag of Holding)" });
+      }
+      return opts;
+    };
+
+    const currentTransferOpts = buildTransferOptions(isBagView ? "bag" : "char", containerOwnerChar.id);
+    const defaultTransferDest = currentTransferOpts[0] ? currentTransferOpts[0].value : "";
+
+    const bagUsedKg = getInventoryItemsWeight(bagOfHolding.items || []);
+    const bagMaxKg = bagOfHolding.maxCapacityKg || 250;
+    const bagPct = Math.min(100, (bagUsedKg / bagMaxKg) * 100);
+
+    return React.createElement("div", { className: "space-y-6" },
+      // Oberer Bereich: Traglast-Karte + Attunement-Slots (3 feste Slots)
+      React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-3 gap-6" },
+        // 1. Traglast-Berechnung (2 Spalten)
+        React.createElement("div", { className: "lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4" },
+          React.createElement("div", { className: "flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3" },
+            React.createElement("div", { className: "flex items-center gap-2.5" },
+              React.createElement("div", { className: "p-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400" },
+                React.createElement(Scale, { className: "w-5 h-5" })
+              ),
+              React.createElement("div", null,
+                React.createElement("h2", { className: "text-base font-bold text-white" }, `Traglast & Belastung – ${targetChar.name}`),
+                React.createElement("p", { className: "text-xs text-slate-400" }, "D&D 5.5e (2024): Tragkraft = Stärke × 7,5 kg · Stoßen/Ziehen/Heben = Stärke × 15 kg")
+              )
+            ),
+            React.createElement("div", { className: "flex items-center gap-2 bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800" },
+              React.createElement("span", { className: "text-xs text-slate-400" }, "Stärke (STR):"),
+              React.createElement("input", {
+                type: "number",
+                min: "1",
+                max: "30",
+                value: targetChar.strength || 10,
+                onChange: (e) => updateChar(targetChar.id, { strength: Math.max(1, Math.min(30, parseInt(e.target.value, 10) || 10)) }),
+                className: "w-14 px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-sm font-bold text-amber-300 text-center"
+              })
+            )
+          ),
+
+          // Gewichtszahlen & Fortschrittsbalken
+          React.createElement("div", { className: "space-y-2" },
+            React.createElement("div", { className: "flex flex-wrap justify-between items-baseline gap-2 text-xs" },
+              React.createElement("div", { className: "flex items-center gap-2" },
+                React.createElement("span", { className: `font-bold text-sm ${enc.textColor}` }, enc.statusLabel),
+                React.createElement("span", { className: "text-slate-400" }, `(${enc.speedPenalty})`)
+              ),
+              React.createElement("div", { className: "font-mono text-sm text-white" },
+                React.createElement("strong", { className: enc.textColor }, enc.totalKg.toFixed(2), " kg"),
+                React.createElement("span", { className: "text-slate-400" }, ` / ${enc.carryMaxKg.toFixed(1)} kg Tragkraft`),
+                React.createElement("span", { className: "text-slate-500 text-xs ml-2" }, `(Max. Ziehen: ${enc.pushDragMaxKg.toFixed(0)} kg)`)
+              )
+            ),
+            React.createElement("div", { className: "w-full h-3.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800 p-0.5" },
+              React.createElement("div", {
+                className: `h-full rounded-full transition-all duration-300 ${enc.barColor}`,
+                style: { width: `${enc.pctOfCarry}%` }
+              })
+            ),
+            React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 text-xs" },
+              React.createElement("div", { className: "p-2.5 rounded-xl bg-slate-950/70 border border-slate-800" },
+                React.createElement("div", { className: "text-[11px] text-slate-400" }, "Ausrüstung"),
+                React.createElement("div", { className: "font-mono font-bold text-slate-200 mt-0.5" }, `${enc.gearKg.toFixed(2)} kg`)
+              ),
+              React.createElement("div", { className: "p-2.5 rounded-xl bg-slate-950/70 border border-slate-800" },
+                React.createElement("div", { className: "text-[11px] text-slate-400" }, "Münzgewicht"),
+                React.createElement("div", { className: "font-mono font-bold text-amber-300 mt-0.5" }, `${enc.coinKg.toFixed(2)} kg`)
+              ),
+              React.createElement("div", { className: "p-2.5 rounded-xl bg-slate-950/70 border border-slate-800" },
+                React.createElement("div", { className: "text-[11px] text-slate-400" }, "Tragkraft (7,5×STR)"),
+                React.createElement("div", { className: "font-mono font-bold text-emerald-300 mt-0.5" }, `${enc.carryMaxKg.toFixed(1)} kg`)
+              ),
+              React.createElement("div", { className: "p-2.5 rounded-xl bg-slate-950/70 border border-slate-800" },
+                React.createElement("div", { className: "text-[11px] text-slate-400" }, "PHB-Belastungsregel"),
+                React.createElement("div", { className: "font-semibold text-slate-300 mt-0.5" },
+                  campaignMeta.useVariantEncumbrance
+                    ? `Ab ${enc.variantEncumberedKg.toFixed(1)} / ${enc.variantHeavilyKg.toFixed(1)} kg`
+                    : "Standard (2024)"
+                )
+              )
+            )
+          )
+        ),
+
+        // 2. Attunement-Tracker (3 feste Einstimmungs-Slots)
+        React.createElement("div", { className: "bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-3" },
+          React.createElement("div", { className: "flex items-center justify-between border-b border-slate-800 pb-3" },
+            React.createElement("div", { className: "flex items-center gap-2" },
+              React.createElement(Sparkles, { className: "w-5 h-5 text-purple-400" }),
+              React.createElement("h2", { className: "text-base font-bold text-white" }, "Einstimmung (Attunement)")
+            ),
+            React.createElement("span", { className: `text-xs font-bold px-2 py-0.5 rounded-full border ${attunedItems.length >= 3 ? "bg-purple-950/70 text-purple-200 border-purple-500/50" : "bg-slate-800 text-slate-300 border-slate-700"}` },
+              `${attunedItems.length} / 3 Slots`
+            )
+          ),
+          React.createElement("div", { className: "space-y-2.5" },
+            attunementSlots.map((slotItem, idx) => React.createElement("div", {
+              key: idx,
+              className: `p-3 rounded-xl border flex items-center justify-between gap-2 ${slotItem ? "bg-purple-950/25 border-purple-500/50" : "bg-slate-950/50 border-slate-800/80 border-dashed"}`
+            },
+              slotItem ? React.createElement(React.Fragment, null,
+                React.createElement("div", { className: "min-w-0" },
+                  React.createElement("div", { className: "text-xs font-bold text-purple-200 truncate flex items-center gap-1.5" },
+                    React.createElement(Sparkles, { className: "w-3.5 h-3.5 text-purple-400 shrink-0" }),
+                    slotItem.name
+                  ),
+                  React.createElement("div", { className: "text-[11px] text-slate-400 truncate mt-0.5" }, slotItem.description || "Magischer Gegenstand")
+                ),
+                React.createElement("button", {
+                  type: "button",
+                  onClick: () => handleToggleAttunement(targetChar.id, slotItem.id),
+                  className: "px-2 py-1 rounded-lg bg-slate-800 hover:bg-red-950 border border-slate-700 hover:border-red-500/50 text-[11px] text-slate-300 hover:text-red-200 shrink-0 transition"
+                }, "Lösen")
+              ) : React.createElement("div", { className: "text-xs text-slate-500 flex items-center gap-2 py-0.5" },
+                React.createElement("span", { className: "w-2 h-2 rounded-full bg-slate-700" }),
+                `Slot ${idx + 1}: Frei`
+              )
+            ))
+          ),
+          React.createElement("p", { className: "text-[11px] text-slate-400" },
+            "Nach D&D 5.5e (2024) erfordert das Einstimmen oder Lösen eines Gegenstands eine Kurze Rast (Short Rest)."
+          )
+        )
+      ),
+
+      // Container-Auswahl: Persönliches Inventar | Gruppenwagen | Nimmervoller Beutel
+      React.createElement("div", { className: panelBox },
+        React.createElement("div", { className: "flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3" },
+          React.createElement("div", { className: "flex flex-wrap gap-2" },
+            React.createElement("button", {
+              type: "button",
+              onClick: () => setPlayerInvSubTab("personal"),
+              className: tabBtn(playerInvSubTab === "personal")
+            }, `Mein Rucksack (${(targetChar.inventory || []).length})`),
+            partyChar && React.createElement("button", {
+              type: "button",
+              onClick: () => setPlayerInvSubTab("party_wagon"),
+              className: tabBtn(playerInvSubTab === "party_wagon")
+            }, `Gruppenwagen (${(partyChar.inventory || []).length})`),
+            bagOfHolding.enabled && React.createElement("button", {
+              type: "button",
+              onClick: () => setPlayerInvSubTab("bag_of_holding"),
+              className: tabBtn(playerInvSubTab === "bag_of_holding")
+            }, `Nimmervoller Beutel (${(bagOfHolding.items || []).length})`)
+          ),
+          React.createElement("input", {
+            type: "text",
+            placeholder: "Gegenstand suchen...",
+            value: invSearchQuery,
+            onChange: (e) => setInvSearchQuery(e.target.value),
+            className: `${inp} w-full sm:w-64`
+          })
+        ),
+
+        // Info-Banner für Nimmervollen Beutel oder Gruppenwagen
+        isBagView && React.createElement("div", { className: "p-3.5 rounded-xl bg-cyan-950/25 border border-cyan-500/30 flex flex-wrap items-center justify-between gap-3" },
+          React.createElement("div", { className: "space-y-0.5" },
+            React.createElement("div", { className: "text-xs font-bold text-cyan-300 flex items-center gap-1.5" },
+              React.createElement(Package, { className: "w-4 h-4 text-cyan-400" }),
+              "Nimmervoller Beutel (Bag of Holding – Gemeinsamer Zugriff)"
+            ),
+            React.createElement("div", { className: "text-[11px] text-slate-400" },
+              "Gegenstände im Inneren zählen nicht gegen dein persönliches Körpergewicht. Maximale Innenkapazität: ", bagMaxKg, " kg."
+            )
+          ),
+          React.createElement("div", { className: "flex items-center gap-3" },
+            React.createElement("div", { className: "w-32 h-2.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800" },
+              React.createElement("div", {
+                className: `h-full ${bagPct > 85 ? "bg-red-500" : "bg-cyan-400"}`,
+                style: { width: `${bagPct}%` }
+              })
+            ),
+            React.createElement("span", { className: "font-mono text-xs font-bold text-cyan-200" }, `${bagUsedKg.toFixed(2)} / ${bagMaxKg} kg`)
+          )
+        ),
+
+        isPartyWagonView && React.createElement("div", { className: "p-3 rounded-xl bg-amber-950/20 border border-amber-500/30 text-xs text-amber-200/90 flex items-center justify-between" },
+          React.createElement("span", null, `Geteilte Expeditionsausrüstung im ${partyChar.name} (Gesamtgewicht: ${getInventoryItemsWeight(partyChar.inventory || []).toFixed(2)} kg).`),
+          React.createElement("span", { className: "text-[11px] text-slate-400" }, "Alle Spieler können Gegenstände entnehmen oder einlagern.")
+        ),
+
+        // Gegenstandsliste
+        filteredItems.length === 0
+          ? React.createElement("p", { className: "text-sm text-slate-500 py-4 text-center" }, "Keine Gegenstände in diesem Bereich gefunden.")
+          : React.createElement("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-3" },
+            filteredItems.map((it) => {
+              const totalItemWeight = (parseFloat(it.weight) || 0) * (parseInt(it.qty, 10) || 1);
+              const selectedDest = invTransferTargets[it.id] || defaultTransferDest;
+              const selectedQty = invTransferQtys[it.id] || 1;
+              const canAttuneHere = !isBagView && !isPartyWagonView && it.requiresAttunement;
+
+              return React.createElement("div", {
+                key: it.id,
+                className: `p-4 rounded-xl border flex flex-col justify-between gap-3 ${it.isAttuned ? "bg-purple-950/20 border-purple-500/50" : it.isMagical ? "bg-slate-950/80 border-cyan-800/40" : "bg-slate-950/60 border-slate-800"}`
+              },
+                React.createElement("div", { className: "space-y-1.5" },
+                  React.createElement("div", { className: "flex items-start justify-between gap-2" },
+                    React.createElement("div", { className: "flex flex-wrap items-center gap-1.5" },
+                      React.createElement("span", { className: "font-bold text-sm text-white" }, it.name),
+                      it.isMagical && React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-950/80 text-cyan-300 border border-cyan-600/40" }, "Magisch"),
+                      it.requiresAttunement && React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full border ${it.isAttuned ? "bg-purple-600/30 text-purple-200 border-purple-400" : "bg-slate-800 text-slate-300 border-slate-600"}` },
+                        it.isAttuned ? "Eingestimmt" : "Benötigt Einstimmung"
+                      )
+                    ),
+                    React.createElement("span", { className: "font-mono text-xs text-slate-300 whitespace-nowrap" },
+                      `${totalItemWeight.toFixed(2)} kg`,
+                      it.qty > 1 && React.createElement("span", { className: "text-slate-500" }, ` (${it.weight} kg/Stk)`)
+                    )
+                  ),
+                  it.description && React.createElement("p", { className: "text-xs text-slate-400" }, it.description),
+
+                  // Ladungs-Tracker (Charges) falls vorhanden
+                  (it.chargesMax || 0) > 0 && React.createElement("div", { className: "pt-1 flex items-center justify-between gap-2 bg-slate-900/90 px-2.5 py-1.5 rounded-lg border border-slate-800" },
+                    React.createElement("span", { className: "text-xs text-amber-300 flex items-center gap-1 font-semibold" },
+                      React.createElement(Zap, { className: "w-3.5 h-3.5" }),
+                      `Ladungen: ${it.chargesCurrent || 0} / ${it.chargesMax}`
+                    ),
+                    React.createElement("div", { className: "flex items-center gap-1" },
+                      React.createElement("button", {
+                        type: "button",
+                        disabled: (it.chargesCurrent || 0) <= 0,
+                        onClick: () => handleAdjustItemCharges(isBagView ? "bag" : "char", containerOwnerChar.id, it.id, -1),
+                        className: "px-2 py-0.5 rounded bg-slate-800 hover:bg-red-950 border border-slate-700 text-xs text-slate-200 disabled:opacity-40"
+                      }, "-1"),
+                      React.createElement("button", {
+                        type: "button",
+                        disabled: (it.chargesCurrent || 0) >= (it.chargesMax || 0),
+                        onClick: () => handleAdjustItemCharges(isBagView ? "bag" : "char", containerOwnerChar.id, it.id, 1),
+                        className: "px-2 py-0.5 rounded bg-slate-800 hover:bg-emerald-950 border border-slate-700 text-xs text-slate-200 disabled:opacity-40"
+                      }, "+1")
+                    )
+                  )
+                ),
+
+                // Aktionsleiste: Menge, Einstimmen-Button, Übergabe-Dropdown & Entfernen
+                React.createElement("div", { className: "space-y-2 pt-2 border-t border-slate-800/80" },
+                  React.createElement("div", { className: "flex flex-wrap items-center justify-between gap-2" },
+                    // Mengensteuerung
+                    React.createElement("div", { className: "flex items-center gap-1.5" },
+                      React.createElement("span", { className: "text-[11px] text-slate-400" }, "Menge:"),
+                      React.createElement("button", {
+                        type: "button",
+                        onClick: () => handleAdjustItemQty(isBagView ? "bag" : "char", containerOwnerChar.id, it.id, -1),
+                        className: "w-6 h-6 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200"
+                      }, "-"),
+                      React.createElement("span", { className: "font-mono text-xs font-bold text-white px-1.5" }, it.qty),
+                      React.createElement("button", {
+                        type: "button",
+                        onClick: () => handleAdjustItemQty(isBagView ? "bag" : "char", containerOwnerChar.id, it.id, 1),
+                        className: "w-6 h-6 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200"
+                      }, "+")
+                    ),
+
+                    // Interaktiver Einstimmen-Button + Löschen
+                    React.createElement("div", { className: "flex items-center gap-1.5" },
+                      canAttuneHere && React.createElement("button", {
+                        type: "button",
+                        onClick: () => handleToggleAttunement(targetChar.id, it.id),
+                        className: `px-2.5 py-1 rounded-lg text-xs font-bold border transition flex items-center gap-1 ${it.isAttuned ? "bg-purple-600/30 border-purple-400 text-purple-100 hover:bg-purple-600/40" : "bg-slate-800 border-purple-500/40 text-purple-300 hover:bg-purple-950/60"}`
+                      },
+                        React.createElement(Sparkles, { className: "w-3 h-3" }),
+                        it.isAttuned ? "Einstimmung lösen" : "Einstimmen"
+                      ),
+                      React.createElement("button", {
+                        type: "button",
+                        onClick: () => handleDeleteInventoryItem(isBagView ? "bag" : "char", containerOwnerChar.id, it),
+                        title: "Gegenstand entfernen",
+                        className: "p-1.5 rounded-lg bg-slate-900 hover:bg-red-950 border border-slate-800 hover:border-red-700/50 text-slate-400 hover:text-red-300 transition"
+                      }, React.createElement(Trash2, { className: "w-3.5 h-3.5" }))
+                    )
+                  ),
+
+                  // Item-Übergabe Dropdown an Mitspieler, Gruppenwagen oder Nimmervollen Beutel
+                  currentTransferOpts.length > 0 && React.createElement("div", { className: "flex items-center gap-1.5" },
+                    it.qty > 1 && React.createElement("input", {
+                      type: "number",
+                      min: "1",
+                      max: it.qty,
+                      value: selectedQty,
+                      onChange: (e) => setInvTransferQtys({ ...invTransferQtys, [it.id]: Math.max(1, Math.min(it.qty, parseInt(e.target.value, 10) || 1)) }),
+                      className: "w-14 px-2 py-1 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white text-center"
+                    }),
+                    React.createElement("select", {
+                      value: selectedDest,
+                      onChange: (e) => setInvTransferTargets({ ...invTransferTargets, [it.id]: e.target.value }),
+                      className: "flex-1 px-2 py-1 rounded-lg bg-slate-900 border border-slate-700 text-xs text-slate-200 focus:outline-none focus:border-amber-500"
+                    },
+                      currentTransferOpts.map((opt) => React.createElement("option", { key: opt.value, value: opt.value }, `→ ${opt.label}`))
+                    ),
+                    React.createElement("button", {
+                      type: "button",
+                      onClick: () => handleTransferInventoryItem(isBagView ? "bag" : "char", containerOwnerChar.id, it, selectedDest, selectedQty),
+                      className: "px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-xs font-semibold flex items-center gap-1 transition shrink-0"
+                    },
+                      React.createElement(Send, { className: "w-3 h-3" }),
+                      "Übergeben"
+                    )
+                  )
+                )
+              );
+            })
+          ),
+
+        // Eigenen Gegenstand / gefundene Alltagsausrüstung eintragen
+        React.createElement("form", {
+          onSubmit: (e) => handlePlayerAddSelfItem(e, isBagView ? "bag" : "char", containerOwnerChar.id),
+          className: "mt-4 p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-3"
+        },
+          React.createElement("div", { className: "text-xs font-semibold text-slate-300 flex items-center gap-1.5" },
+            React.createElement(Plus, { className: "w-4 h-4 text-emerald-400" }),
+            `Gegenstand selbst eintragen (in: ${isBagView ? "Nimmervoller Beutel" : containerOwnerChar.name})`
+          ),
+          React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-4 gap-2" },
+            React.createElement("input", {
+              type: "text",
+              placeholder: "Name (z.B. Fackel, Seil, Dolch)",
+              value: playerNewItemForm.name,
+              onChange: (e) => setPlayerNewItemForm({ ...playerNewItemForm, name: e.target.value }),
+              className: `${inp} sm:col-span-2`
+            }),
+            React.createElement("input", {
+              type: "number",
+              min: "0",
+              step: "0.05",
+              placeholder: "Gewicht (kg/Stk)",
+              value: playerNewItemForm.weight,
+              onChange: (e) => setPlayerNewItemForm({ ...playerNewItemForm, weight: e.target.value }),
+              className: inp
+            }),
+            React.createElement("input", {
+              type: "number",
+              min: "1",
+              placeholder: "Anzahl",
+              value: playerNewItemForm.qty,
+              onChange: (e) => setPlayerNewItemForm({ ...playerNewItemForm, qty: e.target.value }),
+              className: inp
+            })
+          ),
+          React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-3 gap-2 items-center" },
+            React.createElement("input", {
+              type: "text",
+              placeholder: "Kurzbeschreibung / Notiz (optional)",
+              value: playerNewItemForm.description,
+              onChange: (e) => setPlayerNewItemForm({ ...playerNewItemForm, description: e.target.value }),
+              className: `${inp} sm:col-span-2`
+            }),
+            React.createElement("div", { className: "flex flex-wrap items-center gap-3 text-xs text-slate-300" },
+              React.createElement("label", { className: "flex items-center gap-1.5 cursor-pointer" },
+                React.createElement("input", {
+                  type: "checkbox",
+                  checked: playerNewItemForm.isMagical,
+                  onChange: (e) => setPlayerNewItemForm({
+                    ...playerNewItemForm,
+                    isMagical: e.target.checked,
+                    requiresAttunement: e.target.checked ? playerNewItemForm.requiresAttunement : false
+                  })
+                }),
+                "Magisch"
+              ),
+              playerNewItemForm.isMagical && React.createElement("label", { className: "flex items-center gap-1.5 cursor-pointer" },
+                React.createElement("input", {
+                  type: "checkbox",
+                  checked: playerNewItemForm.requiresAttunement,
+                  onChange: (e) => setPlayerNewItemForm({ ...playerNewItemForm, requiresAttunement: e.target.checked })
+                }),
+                "Einstimmung"
+              )
+            )
+          ),
+          React.createElement("button", { type: "submit", className: btnPrimary }, "Zum Inventar hinzufügen")
+        )
+      )
+    );
+  };
+
+  // =========================================================================
+  // MODUL 1: DM-ZENTRALE ("Inventar, Traglast & Attunement")
+  // =========================================================================
+  const renderDmInventoryModule = () => {
+    const playerChars = characters.filter((c) => !c.isParty);
+    const inspectedChars = dmInspectCharId === "all"
+      ? characters
+      : characters.filter((c) => c.id === dmInspectCharId);
+
+    return React.createElement("div", { className: "space-y-6" },
+      // Sub-Navigation für DM-Inventar
+      React.createElement("div", { className: panelBox },
+        React.createElement("div", { className: "flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3" },
+          React.createElement("div", { className: "flex flex-wrap gap-2" },
+            React.createElement("button", {
+              type: "button",
+              onClick: () => setDmInvSubTab("create_grant"),
+              className: tabBtn(dmInvSubTab === "create_grant")
+            }, "Beute & Items erstellen / vergeben"),
+            React.createElement("button", {
+              type: "button",
+              onClick: () => setDmInvSubTab("party_inspect"),
+              className: tabBtn(dmInvSubTab === "party_inspect")
+            }, "Gruppen-Inventare, Traglast & Attunement prüfen")
+          ),
+          React.createElement("div", { className: "flex items-center gap-2 text-xs text-slate-400" },
+            React.createElement("label", { className: "flex items-center gap-1.5 cursor-pointer" },
+              React.createElement("input", {
+                type: "checkbox",
+                checked: !!campaignMeta.useVariantEncumbrance,
+                onChange: (e) => setCampaignMeta({ ...campaignMeta, useVariantEncumbrance: e.target.checked })
+              }),
+              "PHB-Belastungsgrenzen (-3m/-6m) aktiv"
+            )
+          )
+        ),
+
+        // TAB 1: Gegenstände und magische Beute direkt erstellen und vergeben
+        dmInvSubTab === "create_grant" && React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-3 gap-6" },
+          React.createElement("form", {
+            onSubmit: handleDmCreateAndGrantItem,
+            className: "lg:col-span-2 p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-4"
+          },
+            React.createElement("div", { className: "flex items-center gap-2 text-sm font-bold text-amber-300" },
+              React.createElement(Sparkles, { className: "w-4 h-4" }),
+              "Neuen Gegenstand oder magische Beute vergeben"
+            ),
+            React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-3 gap-3" },
+              React.createElement("label", { className: "text-xs text-slate-400 sm:col-span-2" }, "Gegenstandsname",
+                React.createElement("input", {
+                  type: "text",
+                  placeholder: "z.B. Flammenschwert (Flame Tongue) oder Heiltrank",
+                  value: dmItemForm.name,
+                  onChange: (e) => setDmItemForm({ ...dmItemForm, name: e.target.value }),
+                  className: `${inp} w-full mt-1`
+                })
+              ),
+              React.createElement("label", { className: "text-xs text-slate-400" }, "Empfänger / Lager",
+                React.createElement("select", {
+                  value: dmInvTarget,
+                  onChange: (e) => setDmInvTarget(e.target.value),
+                  className: `${inp} w-full mt-1`
+                },
+                  characters.map((c) => React.createElement("option", { key: c.id, value: c.id }, c.isParty ? `Gruppenkasse (${c.name})` : c.name)),
+                  bagOfHolding.enabled && React.createElement("option", { value: "__bag_of_holding" }, "Nimmervoller Beutel (Bag of Holding)")
+                )
+              )
+            ),
+            React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-4 gap-3" },
+              React.createElement("label", { className: "text-xs text-slate-400" }, "Gewicht pro Stück (kg)",
+                React.createElement("input", {
+                  type: "number",
+                  min: "0",
+                  step: "0.05",
+                  value: dmItemForm.weight,
+                  onChange: (e) => setDmItemForm({ ...dmItemForm, weight: e.target.value }),
+                  className: `${inp} w-full mt-1`
+                })
+              ),
+              React.createElement("label", { className: "text-xs text-slate-400" }, "Anzahl (Qty)",
+                React.createElement("input", {
+                  type: "number",
+                  min: "1",
+                  value: dmItemForm.qty,
+                  onChange: (e) => setDmItemForm({ ...dmItemForm, qty: e.target.value }),
+                  className: `${inp} w-full mt-1`
+                })
+              ),
+              React.createElement("label", { className: "text-xs text-slate-400" }, "Max. Ladungen (0 = keine)",
+                React.createElement("input", {
+                  type: "number",
+                  min: "0",
+                  value: dmItemForm.chargesMax,
+                  onChange: (e) => setDmItemForm({ ...dmItemForm, chargesMax: e.target.value }),
+                  className: `${inp} w-full mt-1`
+                })
+              ),
+              React.createElement("div", { className: "flex flex-col justify-end gap-1.5 text-xs text-slate-300 pb-1" },
+                React.createElement("label", { className: "flex items-center gap-2 cursor-pointer" },
+                  React.createElement("input", {
+                    type: "checkbox",
+                    checked: dmItemForm.isMagical,
+                    onChange: (e) => setDmItemForm({
+                      ...dmItemForm,
+                      isMagical: e.target.checked,
+                      requiresAttunement: e.target.checked ? dmItemForm.requiresAttunement : false
+                    })
+                  }),
+                  "Magischer Gegenstand"
+                ),
+                React.createElement("label", { className: "flex items-center gap-2 cursor-pointer" },
+                  React.createElement("input", {
+                    type: "checkbox",
+                    disabled: !dmItemForm.isMagical,
+                    checked: dmItemForm.requiresAttunement,
+                    onChange: (e) => setDmItemForm({ ...dmItemForm, requiresAttunement: e.target.checked })
+                  }),
+                  "Benötigt Attunement"
+                )
+              )
+            ),
+            React.createElement("label", { className: "text-xs text-slate-400 block" }, "Beschreibung, Werte & Effekte (D&D 5.5e)",
+              React.createElement("textarea", {
+                rows: "2",
+                placeholder: "Schaden, Weapon Mastery, Ladungsregeln oder magische Eigenschaften...",
+                value: dmItemForm.description,
+                onChange: (e) => setDmItemForm({ ...dmItemForm, description: e.target.value }),
+                className: `${inp} w-full mt-1`
+              })
+            ),
+            React.createElement("button", { type: "submit", className: btnPrimary }, "Gegenstand erstellen & direkt vergeben")
+          ),
+
+          // Rechte Spalte: Nimmervoller Beutel & Schnellvorlagen
+          React.createElement("div", { className: "space-y-4" },
+            React.createElement("div", { className: "p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-3" },
+              React.createElement("div", { className: "flex items-center justify-between" },
+                React.createElement("span", { className: "text-xs font-bold text-cyan-300 flex items-center gap-1.5" },
+                  React.createElement(Package, { className: "w-4 h-4" }),
+                  "Nimmervoller Beutel (Gruppe)"
+                ),
+                React.createElement("label", { className: "text-xs text-slate-300 flex items-center gap-1.5 cursor-pointer" },
+                  React.createElement("input", {
+                    type: "checkbox",
+                    checked: !!bagOfHolding.enabled,
+                    onChange: (e) => setBagOfHolding({ ...bagOfHolding, enabled: e.target.checked })
+                  }),
+                  "Aktiv"
+                )
+              ),
+              React.createElement("div", { className: "flex items-center justify-between gap-2 text-xs" },
+                React.createElement("span", { className: "text-slate-400" }, "Max. Kapazität (kg):"),
+                React.createElement("input", {
+                  type: "number",
+                  min: "10",
+                  value: bagOfHolding.maxCapacityKg || 250,
+                  onChange: (e) => setBagOfHolding({ ...bagOfHolding, maxCapacityKg: Math.max(10, parseFloat(e.target.value) || 250) }),
+                  className: `${inp} w-24 text-right`
+                })
+              ),
+              React.createElement("div", { className: "text-xs text-slate-300" },
+                `Aktuelle Füllung: ${getInventoryItemsWeight(bagOfHolding.items || []).toFixed(2)} / ${bagOfHolding.maxCapacityKg || 250} kg (${(bagOfHolding.items || []).length} Einträge)`
+              )
+            ),
+
+            React.createElement("div", { className: "p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-2.5" },
+              React.createElement("div", { className: "text-xs font-bold text-slate-300" }, "Schnell-Vorlagen (2024 DMG)"),
+              [
+                { name: "Heiltrank (Potion of Healing)", weight: 0.25, qty: 1, isMagical: true, requiresAttunement: false, chargesMax: 0, description: "Stellt 2W4 + 2 TP wieder her (Bonusaktion)." },
+                { name: "Großer Heiltrank (Greater)", weight: 0.25, qty: 1, isMagical: true, requiresAttunement: false, chargesMax: 0, description: "Stellt 4W4 + 4 TP wieder her (Bonusaktion)." },
+                { name: "Zauberstab der Feuerbälle", weight: 0.5, qty: 1, isMagical: true, requiresAttunement: true, chargesMax: 7, description: "7 Ladungen. 1 Ladung = Feuerball (SG 15). Regeneriert 1W6+1 bei Morgendämmerung." },
+                { name: "Stiefel der Elfenart (Boots of Elvenkind)", weight: 0.5, qty: 1, isMagical: true, requiresAttunement: false, chargesMax: 0, description: "Schritte sind lautlos; Vorteil auf Heimlichkeit (Bewegung)." }
+              ].map((tpl, idx) => React.createElement("button", {
+                key: idx,
+                type: "button",
+                onClick: () => setDmItemForm({
+                  name: tpl.name,
+                  weight: String(tpl.weight),
+                  qty: String(tpl.qty),
+                  isMagical: tpl.isMagical,
+                  requiresAttunement: tpl.requiresAttunement,
+                  chargesMax: String(tpl.chargesMax),
+                  description: tpl.description
+                }),
+                className: "w-full text-left p-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs text-slate-200 transition flex justify-between items-center"
+              },
+                React.createElement("span", { className: "truncate pr-2" }, tpl.name),
+                React.createElement("span", { className: "text-[10px] text-amber-300 shrink-0" }, "Übernehmen")
+              ))
+            )
+          )
+        ),
+
+        // TAB 2: Einsicht in alle Inventare, Traglasten, Ladungen & Attunements auf einen Blick
+        dmInvSubTab === "party_inspect" && React.createElement("div", { className: "space-y-5" },
+          // Kompakte Gruppen-Übersichtstabelle (Traglast & Attunement-Slots auf einen Blick)
+          React.createElement("div", { className: "overflow-x-auto" },
+            React.createElement("table", { className: "w-full text-left text-xs" },
+              React.createElement("thead", null,
+                React.createElement("tr", { className: "border-b border-slate-800 text-slate-400" },
+                  React.createElement("th", { className: "py-2" }, "Charakter"),
+                  React.createElement("th", { className: "py-2" }, "STR"),
+                  React.createElement("th", { className: "py-2" }, "Gesamtgewicht (inkl. Münzen)"),
+                  React.createElement("th", { className: "py-2" }, "Status"),
+                  React.createElement("th", { className: "py-2" }, "Attunement-Slots (max. 3)")
+                )
+              ),
+              React.createElement("tbody", { className: "divide-y divide-slate-800" },
+                playerChars.map((c) => {
+                  const enc = getEncumbranceStats(c, campaignMeta.useVariantEncumbrance);
+                  const attuned = (c.inventory || []).filter((i) => i.requiresAttunement && i.isAttuned);
+                  return React.createElement("tr", { key: c.id },
+                    React.createElement("td", { className: "py-3 font-bold text-white" }, c.name),
+                    React.createElement("td", { className: "py-3" },
+                      React.createElement("input", {
+                        type: "number",
+                        min: "1",
+                        max: "30",
+                        value: c.strength || 10,
+                        onChange: (e) => updateChar(c.id, { strength: Math.max(1, Math.min(30, parseInt(e.target.value, 10) || 10)) }),
+                        className: "w-14 px-2 py-0.5 rounded bg-slate-950 border border-slate-700 text-xs font-bold text-amber-300 text-center"
+                      })
+                    ),
+                    React.createElement("td", { className: "py-3 font-mono" },
+                      React.createElement("span", { className: enc.textColor }, `${enc.totalKg.toFixed(2)} kg`),
+                      React.createElement("span", { className: "text-slate-500" }, ` / ${enc.carryMaxKg.toFixed(1)} kg`)
+                    ),
+                    React.createElement("td", { className: `py-3 font-semibold ${enc.textColor}` }, enc.statusLabel),
+                    React.createElement("td", { className: "py-3" },
+                      React.createElement("div", { className: "flex flex-wrap items-center gap-1.5" },
+                        React.createElement("span", { className: `px-2 py-0.5 rounded-full font-bold text-[11px] border ${attuned.length >= 3 ? "bg-purple-950 text-purple-200 border-purple-500/50" : "bg-slate-800 text-slate-300 border-slate-700"}` },
+                          `${attuned.length}/3`
+                        ),
+                        attuned.map((a) => React.createElement("span", { key: a.id, className: "px-2 py-0.5 rounded bg-purple-950/50 border border-purple-500/30 text-purple-200 text-[11px]" }, a.name))
+                      )
+                    )
+                  );
+                })
+              )
+            )
+          ),
+
+          // Filter für Detail-Inspektion
+          React.createElement("div", { className: "flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-800" },
+            React.createElement("div", { className: "text-xs font-bold text-slate-300 flex items-center gap-1.5" },
+              React.createElement(Eye, { className: "w-4 h-4 text-amber-400" }),
+              "Detail-Einsicht in Inventare, Ladungen & Attunements"
+            ),
+            React.createElement("select", {
+              value: dmInspectCharId,
+              onChange: (e) => setDmInspectCharId(e.target.value),
+              className: `${inp} text-xs`
+            },
+              React.createElement("option", { value: "all" }, "Alle Charaktere & Gruppenwagen anzeigen"),
+              characters.map((c) => React.createElement("option", { key: c.id, value: c.id }, c.name))
+            )
+          ),
+
+          // Detaillierte Inventar-Karten pro Charakter + Nimmervoller Beutel
+          React.createElement("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-4" },
+            inspectedChars.map((c) => {
+              const enc = getEncumbranceStats(c, campaignMeta.useVariantEncumbrance);
+              return React.createElement("div", { key: c.id, className: "p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-3" },
+                React.createElement("div", { className: "flex items-center justify-between border-b border-slate-800 pb-2" },
+                  React.createElement("div", null,
+                    React.createElement("div", { className: "font-bold text-sm text-white" }, c.name),
+                    React.createElement("div", { className: "text-[11px] text-slate-400" },
+                      c.isParty ? "Geteilter Gruppenwagen" : `STR ${enc.str} · ${enc.totalKg.toFixed(2)} / ${enc.carryMaxKg.toFixed(1)} kg (${enc.statusLabel})`
+                    )
+                  ),
+                  !c.isParty && React.createElement("span", { className: "text-xs font-bold text-purple-300" },
+                    `Attunement: ${(c.inventory || []).filter((i) => i.requiresAttunement && i.isAttuned).length}/3`
+                  )
+                ),
+                (c.inventory || []).length === 0
+                  ? React.createElement("p", { className: "text-xs text-slate-500" }, "Inventar ist leer.")
+                  : React.createElement("div", { className: "space-y-2" },
+                    (c.inventory || []).map((it) => React.createElement("div", {
+                      key: it.id,
+                      className: "p-2.5 rounded-lg bg-slate-900 border border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs"
+                    },
+                      React.createElement("div", { className: "min-w-0 flex-1" },
+                        React.createElement("div", { className: "flex flex-wrap items-center gap-1.5" },
+                          React.createElement("span", { className: "font-semibold text-slate-100" }, `${it.qty}× ${it.name}`),
+                          it.isMagical && React.createElement("span", { className: "text-[10px] px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-300 border border-cyan-700/40" }, "Magisch"),
+                          it.isAttuned && React.createElement("span", { className: "text-[10px] px-1.5 py-0.2 rounded bg-purple-950 text-purple-200 border border-purple-500/40" }, "Eingestimmt")
+                        ),
+                        React.createElement("div", { className: "text-[11px] text-slate-400 mt-0.5" },
+                          `${((parseFloat(it.weight) || 0) * (it.qty || 1)).toFixed(2)} kg`,
+                          (it.chargesMax || 0) > 0 && ` · Ladungen: ${it.chargesCurrent || 0}/${it.chargesMax}`
+                        )
+                      ),
+                      React.createElement("div", { className: "flex items-center gap-1" },
+                        (it.chargesMax || 0) > 0 && React.createElement(React.Fragment, null,
+                          React.createElement("button", {
+                            type: "button",
+                            onClick: () => handleAdjustItemCharges("char", c.id, it.id, -1),
+                            className: "px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-[11px] text-slate-200"
+                          }, "-1L"),
+                          React.createElement("button", {
+                            type: "button",
+                            onClick: () => handleAdjustItemCharges("char", c.id, it.id, 1),
+                            className: "px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-[11px] text-slate-200"
+                          }, "+1L")
+                        ),
+                        !c.isParty && it.requiresAttunement && React.createElement("button", {
+                          type: "button",
+                          onClick: () => handleToggleAttunement(c.id, it.id),
+                          className: "px-2 py-0.5 rounded bg-purple-950/70 border border-purple-500/40 text-[11px] text-purple-200"
+                        }, it.isAttuned ? "Lösen" : "Einstimmen"),
+                        React.createElement("button", {
+                          type: "button",
+                          onClick: () => handleDeleteInventoryItem("char", c.id, it),
+                          className: "p-1 rounded bg-slate-800 hover:bg-red-950 text-slate-400 hover:text-red-300"
+                        }, React.createElement(Trash2, { className: "w-3.5 h-3.5" }))
+                      )
+                    ))
+                  )
+              );
+            }),
+
+            // Nimmervoller Beutel Karte in der DM-Übersicht
+            bagOfHolding.enabled && React.createElement("div", { className: "p-4 rounded-xl bg-cyan-950/15 border border-cyan-700/40 space-y-3" },
+              React.createElement("div", { className: "flex items-center justify-between border-b border-cyan-800/40 pb-2" },
+                React.createElement("div", null,
+                  React.createElement("div", { className: "font-bold text-sm text-cyan-200" }, "Nimmervoller Beutel (Bag of Holding)"),
+                  React.createElement("div", { className: "text-[11px] text-slate-400" },
+                    `${getInventoryItemsWeight(bagOfHolding.items || []).toFixed(2)} / ${bagOfHolding.maxCapacityKg || 250} kg`
+                  )
+                )
+              ),
+              (bagOfHolding.items || []).length === 0
+                ? React.createElement("p", { className: "text-xs text-slate-500" }, "Beutel ist leer.")
+                : React.createElement("div", { className: "space-y-2" },
+                  (bagOfHolding.items || []).map((it) => React.createElement("div", {
+                    key: it.id,
+                    className: "p-2.5 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-between gap-2 text-xs"
+                  },
+                    React.createElement("div", null,
+                      React.createElement("div", { className: "font-semibold text-slate-100" }, `${it.qty}× ${it.name}`),
+                      React.createElement("div", { className: "text-[11px] text-slate-400" },
+                        `${((parseFloat(it.weight) || 0) * (it.qty || 1)).toFixed(2)} kg`,
+                        (it.chargesMax || 0) > 0 && ` · Ladungen: ${it.chargesCurrent || 0}/${it.chargesMax}`
+                      )
+                    ),
+                    React.createElement("button", {
+                      type: "button",
+                      onClick: () => handleDeleteInventoryItem("bag", null, it),
+                      className: "p-1 rounded bg-slate-800 hover:bg-red-950 text-slate-400 hover:text-red-300"
+                    }, React.createElement(Trash2, { className: "w-3.5 h-3.5" }))
+                  ))
+                )
+            )
+          )
+        )
+      )
+    );
+  };
 
   // --- DM FINANZ-BEREICH (Spezifische Verwaltung für Finanzen & Shops) ---
   const DM_FINANCE_TABS = [
@@ -1770,6 +3122,7 @@ function App() {
           React.createElement("div", { className: "flex flex-wrap gap-2" },
             React.createElement("input", { type: "text", placeholder: "Charaktername", value: newCharName, onChange: (e) => setNewCharName(e.target.value), className: `${inp} flex-1 min-w-[12rem]` }),
             React.createElement("input", { type: "text", placeholder: "Klasse / Stufe / Rolle", value: newCharRole, onChange: (e) => setNewCharRole(e.target.value), className: `${inp} flex-1 min-w-[12rem]` }),
+            React.createElement("input", { type: "number", min: "1", max: "30", placeholder: "STR", title: "Stärke-Wert", value: newCharStrength, onChange: (e) => setNewCharStrength(e.target.value), className: `${inp} w-20` }),
             React.createElement("input", { type: "text", placeholder: "Login-Passwort", value: newCharPassword, onChange: (e) => setNewCharPassword(e.target.value), className: `${inp} w-36` })
           ),
           React.createElement("button", { type: "submit", className: btnPrimary }, "Spieler anlegen")
@@ -1786,12 +3139,15 @@ function App() {
                 !c.isParty && React.createElement("button", { type: "button", onClick: () => handleDeleteCharacter(c), className: btnDanger }, "Löschen")
               )
             ),
-            React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-3 gap-3" },
+            React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-4 gap-3" },
               React.createElement("label", { className: "text-[11px] text-slate-400" }, "Anzeigename",
                 React.createElement("input", { type: "text", value: c.name, onChange: (e) => updateChar(c.id, { name: e.target.value }), className: `${inp} w-full mt-1` })
               ),
               React.createElement("label", { className: "text-[11px] text-slate-400" }, "Klasse / Beschreibung",
                 React.createElement("input", { type: "text", value: c.role || "", onChange: (e) => updateChar(c.id, { role: e.target.value }), className: `${inp} w-full mt-1` })
+              ),
+              React.createElement("label", { className: "text-[11px] text-slate-400" }, "Stärke (STR)",
+                React.createElement("input", { type: "number", min: "1", max: "30", value: c.strength || 10, onChange: (e) => updateChar(c.id, { strength: Math.max(1, Math.min(30, parseInt(e.target.value, 10) || 10)) }), className: `${inp} w-full mt-1` })
               ),
               React.createElement("label", { className: "text-[11px] text-slate-400" }, c.isParty ? "Gruppenkassen-Passwort" : "Login-Passwort",
                 React.createElement("input", { type: "text", value: c.password || "", onChange: (e) => updateChar(c.id, { password: e.target.value }), className: `${inp} w-full mt-1` })
@@ -1823,7 +3179,7 @@ function App() {
     );
   };
 
-  // --- PLATZHALTER-ANSICHT FÜR DIE 6 NEUEN KAMPAGNEN-REITER (Getrennt nach Spieler- & DM-Ansicht) ---
+  // --- PLATZHALTER-ANSICHT FÜR DIE VERBLEIBENDEN KAMPAGNEN-REITER ---
   const renderPlaceholderModule = (moduleKey) => {
     const info = PLACEHOLDER_INFO[moduleKey];
     const tabMeta = CAMPAIGN_TABS.find((t) => t.id === moduleKey);
@@ -2036,7 +3392,6 @@ function App() {
           )
         ),
 
-        // Rechts im Header: Nur DM sieht Silber-/Gold-Standard & Genehmigungs-Badge; beide haben Abmelden
         React.createElement("div", { className: "flex flex-wrap items-center gap-2" },
           isDm && React.createElement("div", { className: "flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800" },
             React.createElement("button", { onClick: () => setStandard("silver"), className: `px-2.5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${standard === "silver" ? "bg-slate-700 text-white" : "text-slate-400 hover:text-slate-200"}` },
@@ -2055,7 +3410,7 @@ function App() {
         )
       ),
 
-      // Haupt-Navigationsleiste für alle Kampagnen-Reiter (+ Allgemeine Einstellungen exklusiv in der DM-Zentrale)
+      // Haupt-Navigationsleiste für alle Kampagnen-Reiter
       React.createElement("div", { className: "border-t border-slate-800/80 bg-slate-950/80" },
         React.createElement("div", { className: "max-w-7xl mx-auto px-4 py-2 flex items-center justify-between gap-2 overflow-x-auto" },
           React.createElement("div", { className: "flex items-center gap-1.5" },
@@ -2090,9 +3445,11 @@ function App() {
     React.createElement("main", { className: "max-w-7xl mx-auto px-4 py-6" },
       // A) DM Allgemeine Einstellungen
       isDm && mainSection === "__settings" ? renderDmGeneralSettings() :
-      // B) Die 6 neuen Reiter (Spieler- bzw. DM-bezogen)
+      // B) Modul 1: Inventar, Traglast & Attunement (Spieler & DM)
+      mainSection === "inventory" ? (isDm ? renderDmInventoryModule() : renderPlayerInventoryModule()) :
+      // C) Die übrigen Kampagnen-Reiter (Bastion, Fraktionen, Quests, Lexikon, Downtime)
       mainSection !== "finances" ? renderPlaceholderModule(mainSection) :
-      // C) Reiter "Finanzen & Shops" – SPIELER-MODUS
+      // D) Reiter "Finanzen & Shops" – SPIELER-MODUS
       !isDm ? React.createElement("div", { className: "space-y-6" },
         React.createElement("div", { className: "bg-slate-900/80 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4" },
           React.createElement("div", { className: "flex flex-wrap items-center gap-2" },
@@ -2121,7 +3478,9 @@ function App() {
                 React.createElement("h2", { className: "text-lg font-bold text-white flex items-center gap-2" },
                   React.createElement(Coins, { className: "w-5 h-5 text-amber-400" }), " ", activeChar.name
                 ),
-                React.createElement("span", { className: "text-xs text-slate-400" }, "Gewicht: ", activeWeight.kg, " kg")
+                React.createElement("span", { className: "text-xs text-slate-400" },
+                  `Münzen: ${activeWeight.kg} kg · Gesamtlast: ${activeEncumbrance.totalKg.toFixed(2)} / ${activeEncumbrance.carryMaxKg.toFixed(1)} kg`
+                )
               ),
               React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-4 gap-3" },
                 COIN_META.map((m) => React.createElement("div", { key: m.key, className: `p-3.5 rounded-xl border ${m.bg} ${m.border}` },
@@ -2181,7 +3540,7 @@ function App() {
           playerFinancePanel
         )
       ) :
-      // D) Reiter "Finanzen & Shops" – DM-MODUS
+      // E) Reiter "Finanzen & Shops" – DM-MODUS
       React.createElement("div", { className: "space-y-6" },
         pendingRequests.length > 0 && React.createElement("div", { className: "bg-emerald-950/25 border border-emerald-500/40 rounded-2xl p-4 space-y-3" },
           React.createElement("div", { className: "flex justify-between items-center" },
@@ -2223,9 +3582,3 @@ window.__appMounted = true;
     </script>
 </body>
 </html>
-'''
-
-with open("dnd-kampagnen-manager.html", "w", encoding="utf-8") as f:
-    f.write(html_code)
-
-print("Saved successfully. Bytes:", len(html_code.encode("utf-8")))
