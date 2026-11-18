@@ -1,0 +1,1005 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>D&D 5.5e Wirtschafts- & Kampagnen-Manager</title>
+    <!-- Tailwind CSS (feste Version) -->
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+    <!-- React & ReactDOM (feste Version, Production-Build) -->
+    <script crossorigin src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js"></script>
+    <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+    <!-- Lucide Icons (feste Version, nur Icon-Daten) -->
+    <script src="https://cdn.jsdelivr.net/npm/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+    <!-- Firebase Realtime Database (gemeinsamer Spielstand für alle Geräte) -->
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
+
+    <style>
+        html, body { background: #020617; color: #f1f5f9; font-family: system-ui, -apple-system, Segoe UI, sans-serif; margin: 0; }
+        #boot-msg { padding: 2rem; text-align: center; color: #94a3b8; }
+        #diag-banner { position: fixed; left: 0; right: 0; top: 0; z-index: 9999; background: #7f1d1d; color: #fee2e2; padding: 10px 16px; font-size: 14px; display: none; }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans selection:bg-amber-500/30">
+    <div id="diag-banner"></div>
+    <div id="root"><p id="boot-msg">Lade Anwendung …</p></div>
+    <script>
+        (function () {
+            var banner = document.getElementById('diag-banner');
+            function show(msg) { banner.style.display = 'block'; banner.innerHTML += '<div>' + msg + '</div>'; }
+            window.addEventListener('error', function (e) { show('JavaScript-Fehler: ' + (e.message || 'unbekannt')); });
+            window.addEventListener('load', function () {
+                if (!window.React || !window.ReactDOM) {
+                    show('React konnte nicht von cdn.jsdelivr.net geladen werden. Bitte Internetverbindung / Werbeblocker prüfen.');
+                } else if (!window.__appMounted) {
+                    show('Die App wurde nicht gestartet. Öffne die Browser-Konsole (F12) für Details.');
+                }
+                if (!window.tailwind) show('Das Design (Tailwind) konnte nicht von cdn.tailwindcss.com geladen werden. Die Seite sieht deshalb ungestaltet aus.');
+            });
+        })();
+    </script>
+
+    <script>
+const { useState, useEffect, useMemo, useRef } = React;
+const FIREBASE_CONFIG = {
+  apiKey: "",
+  authDomain: "",
+  databaseURL: "",
+  // z.B. https://MEIN-PROJEKT-default-rtdb.europe-west1.firebasedatabase.app
+  projectId: "",
+  appId: ""
+};
+const FIREBASE_ROOT = "dnd55/state";
+const FIREBASE_ENABLED = !!FIREBASE_CONFIG.databaseURL;
+const SYNC_KEYS = ["characters", "shopTabs", "logs", "pendingRequests", "standard"];
+const SYNC_NORMALIZERS = {
+  characters: (v) => (v || []).map((c) => ({
+    ...c,
+    coins: { pp: 0, gp: 0, sp: 0, cp: 0, ...c.coins || {} },
+    upgrades: c.upgrades || []
+  })),
+  shopTabs: (v) => (v || []).map((t) => ({ ...t, items: t.items || [] })),
+  logs: (v) => v || [],
+  pendingRequests: (v) => v || [],
+  standard: (v) => v || "silver"
+};
+const cleanForDb = (v) => JSON.parse(JSON.stringify(v === void 0 ? null : v));
+const renderIconNode = (n, key) => {
+  const tag = n[0];
+  const attrs = n[1] && typeof n[1] === "object" && !Array.isArray(n[1]) ? n[1] : {};
+  const kids = Array.isArray(n[2]) ? n[2].map((c, i) => renderIconNode(c, i)) : [];
+  return React.createElement(tag, { ...attrs, key }, ...kids);
+};
+const makeIcon = (...names) => {
+  return function IconComponent({ className = "" }) {
+    try {
+      const icons = window.lucide && window.lucide.icons || {};
+      const node = names.map((n) => icons[n]).find(Boolean);
+      if (!node || !Array.isArray(node)) return /* @__PURE__ */ React.createElement("span", { className });
+      const children = node[0] === "svg" ? Array.isArray(node[2]) ? node[2] : [] : node;
+      return /* @__PURE__ */ React.createElement(
+        "svg",
+        {
+          xmlns: "http://www.w3.org/2000/svg",
+          viewBox: "0 0 24 24",
+          fill: "none",
+          stroke: "currentColor",
+          strokeWidth: "2",
+          strokeLinecap: "round",
+          strokeLinejoin: "round",
+          className
+        },
+        children.map((c, i) => renderIconNode(c, i))
+      );
+    } catch (e) {
+      return /* @__PURE__ */ React.createElement("span", { className });
+    }
+  };
+};
+const Coins = makeIcon("Coins");
+const Shield = makeIcon("Shield");
+const Crown = makeIcon("Crown");
+const Scale = makeIcon("Scale");
+const AlertTriangle = makeIcon("TriangleAlert", "AlertTriangle");
+const CheckCircle2 = makeIcon("CircleCheck", "CheckCircle2", "CheckCircle");
+const Lock = makeIcon("Lock");
+const Unlock = makeIcon("LockOpen", "Unlock");
+const Compass = makeIcon("Compass");
+const KeyRound = makeIcon("KeyRound");
+const Check = makeIcon("Check");
+const X = makeIcon("X");
+const UserCheck = makeIcon("UserCheck", "UserRoundCheck");
+const LogOut = makeIcon("LogOut");
+const COIN_VALUES = { pp: 1e3, gp: 100, sp: 10, cp: 1 };
+const COIN_META = [
+  { key: "pp", label: "Platin (PM)", short: "PM", color: "text-cyan-300", bg: "bg-cyan-950/60", border: "border-cyan-700/50" },
+  { key: "gp", label: "Gold (GM)", short: "GM", color: "text-amber-400", bg: "bg-amber-950/60", border: "border-amber-600/50" },
+  { key: "sp", label: "Silber (SM)", short: "SM", color: "text-slate-200", bg: "bg-slate-800/80", border: "border-slate-500/50" },
+  { key: "cp", label: "Kupfer (KM)", short: "KM", color: "text-orange-400", bg: "bg-orange-950/60", border: "border-orange-700/50" }
+];
+const LIFESTYLES = [
+  {
+    id: "wretched",
+    name: "Elend / Arm",
+    silverCostCp: 10,
+    goldCostCp: 100,
+    effectBadge: "Nachteil (Soziales)",
+    effectColor: "text-red-400 border-red-700/50 bg-red-950/40",
+    description: "Nachteil auf Überzeugen & Einschüchtern bei Bürgern, Wachen und Händlern; erhöhtes Risiko für Taschendiebstahl oder Krankheit."
+  },
+  {
+    id: "modest",
+    name: "Bescheiden",
+    silverCostCp: 50,
+    goldCostCp: 500,
+    effectBadge: "Neutral",
+    effectColor: "text-slate-300 border-slate-600/50 bg-slate-800/60",
+    description: "Standard-Zugang zu Tavernen und einfachen Handwerkern; keine Boni oder Mali."
+  },
+  {
+    id: "wealthy",
+    name: "Wohlhabend",
+    silverCostCp: 150,
+    goldCostCp: 1500,
+    effectBadge: "Vorteil (Gerüchte & Händler)",
+    effectColor: "text-emerald-400 border-emerald-700/50 bg-emerald-950/40",
+    description: "Vorteil auf Proben, um Gerüchte zu sammeln oder Kontakt zu lokalen Händlern und Beamten aufzunehmen."
+  },
+  {
+    id: "aristocratic",
+    name: "Aristokratisch",
+    silverCostCp: 500,
+    goldCostCp: 5e3,
+    effectBadge: "Vorteil (Adel & Gilden)",
+    effectColor: "text-amber-300 border-amber-600/50 bg-amber-950/40",
+    description: "Vorteil auf soziale Proben beim Adel, Gildenmeistern und hohen Würdenträgern; Zugang zu geschlossenen Gesellschaften."
+  }
+];
+const INITIAL_SHOP_TABS = [
+  {
+    id: "tab_gear",
+    name: "Ausrüstung & Tränke",
+    description: "Standard-Waren nach PHB 2024. Nicht-magische Preise passen sich automatisch an den Silber- oder Gold-Standard an.",
+    items: [
+      { id: "i_heal", name: "Heiltrank (Potion of Healing)", phbUnits: 50, alwaysGold: false, desc: "Stellt 2W4 + 2 TP wieder her (Bonusaktion in 5.5e)." },
+      { id: "i_heal_gr", name: "Großer Heiltrank (Greater)", phbUnits: 150, alwaysGold: true, desc: "Stellt 4W4 + 4 TP wieder her (Magischer Richtpreis)." },
+      { id: "i_antitoxin", name: "Gegengift (Antitoxin)", phbUnits: 50, alwaysGold: false, desc: "Vorteil auf Rettungswürfe gegen Gift für 1 Stunde." },
+      { id: "i_rations", name: "Reiseproviant (5 Tage)", phbUnits: 2.5, alwaysGold: false, desc: "Haltbare Rationen für Überlandreisen (5 Einheiten)." },
+      { id: "i_thieves", name: "Diebeswerkzeug (2024 PHB)", phbUnits: 25, alwaysGold: false, desc: "Ermöglicht das Knacken von Schlössern & Entschärfen von Fallen (GES SG 15)." },
+      { id: "i_diamond", name: "Diamantstaub (300 GM)", phbUnits: 300, alwaysGold: true, desc: "Verbrauchskomponente für Wiederbeleben (Revivify)." }
+    ]
+  },
+  {
+    id: "tab_bastion",
+    name: "Bastion & Gold-Sinks",
+    description: "Langfristige Investitionen für Stufe 5+ (DMG 2024 Bastionen, Meisterwerk-Waffen, Gefolgsleute und Informanten).",
+    items: [
+      { id: "b_workshop", name: "Bastion: Spezialraum ausbauen", phbUnits: 1e3, alwaysGold: true, isUpgrade: true, desc: "Fügt der Bastion eine Schmiede, Bibliothek oder ein Alchemielabor hinzu." },
+      { id: "b_defenses", name: "Bastion: Wehrmauern & Wachen", phbUnits: 500, alwaysGold: true, isUpgrade: true, desc: "Reduziert Verluste bei Bastions-Ereignissen und schützt eingelagerte Schätze." },
+      { id: "b_masterwork", name: "Meisterhafte Waffen-Veredelung", phbUnits: 400, alwaysGold: true, isUpgrade: true, desc: "Nicht-magisches Upgrade: +1 auf Initiative oder +1 auf Schadenswürfe." },
+      { id: "b_spy_net", name: "Informanten-Netzwerk (Stufe 1)", phbUnits: 150, alwaysGold: true, isUpgrade: true, desc: "Liefert vor Quests verlässliche Infos über Monster-Schwächen & Geheimgänge." },
+      { id: "b_mercenary", name: "Söldner-Trupp / Packwagen (1 Woche)", phbUnits: 35, alwaysGold: false, desc: "Bewacht das Lager und transportiert schwere Dungeon-Schätze sicher." },
+      { id: "b_temple", name: "Tempel-Spende & Segen", phbUnits: 100, alwaysGold: true, desc: "Gewährt den Segen der Zuversicht (+1W4 auf einen Rettungswurf innerhalb von 7 Tagen)." }
+    ]
+  }
+];
+const INITIAL_CHARACTERS = [
+  {
+    id: "party_treasury",
+    name: "Gruppenkasse (Expedition)",
+    role: "Gemeinsamer Schatz & Wagen",
+    isParty: true,
+    password: "1234",
+    lifestyle: "modest",
+    coins: { pp: 0, gp: 0, sp: 0, cp: 0 },
+    bankNotesGp: 0,
+    upgrades: []
+  },
+  {
+    id: "char_1",
+    name: "Thrain Eisenfaust",
+    role: "Zwergischer Kämpfer (Stufe 5)",
+    isParty: false,
+    password: "1234",
+    lifestyle: "modest",
+    coins: { pp: 0, gp: 0, sp: 0, cp: 0 },
+    bankNotesGp: 0,
+    upgrades: []
+  },
+  {
+    id: "char_2",
+    name: "Lyra Sternenweber",
+    role: "Elfische Magierin (Stufe 5)",
+    isParty: false,
+    password: "1234",
+    lifestyle: "wealthy",
+    coins: { pp: 0, gp: 0, sp: 0, cp: 0 },
+    bankNotesGp: 0,
+    upgrades: []
+  },
+  {
+    id: "char_3",
+    name: "Vesper Schattenklinge",
+    role: "Halbling-Schurke (Stufe 5)",
+    isParty: false,
+    password: "1234",
+    lifestyle: "wretched",
+    coins: { pp: 0, gp: 0, sp: 0, cp: 0 },
+    bankNotesGp: 0,
+    upgrades: []
+  }
+];
+const INITIAL_LOGS = [];
+function getTotalCopper(coins) {
+  return (coins.pp || 0) * COIN_VALUES.pp + (coins.gp || 0) * COIN_VALUES.gp + (coins.sp || 0) * COIN_VALUES.sp + (coins.cp || 0) * COIN_VALUES.cp;
+}
+function copperToCoins(totalCp) {
+  let rem = Math.max(0, Math.round(totalCp));
+  const pp = Math.floor(rem / COIN_VALUES.pp);
+  rem %= COIN_VALUES.pp;
+  const gp = Math.floor(rem / COIN_VALUES.gp);
+  rem %= COIN_VALUES.gp;
+  const sp = Math.floor(rem / COIN_VALUES.sp);
+  rem %= COIN_VALUES.sp;
+  const cp = rem;
+  return { pp, gp, sp, cp };
+}
+function deductCopperFromCoins(coins, costCp) {
+  const currentTotal = getTotalCopper(coins);
+  if (currentTotal < costCp) return null;
+  const newTotal = currentTotal - costCp;
+  return copperToCoins(newTotal);
+}
+function formatCurrency(totalCp, standard = "silver") {
+  if (totalCp === 0) return "0 KM";
+  const c = copperToCoins(totalCp);
+  const parts = [];
+  if (c.pp > 0) parts.push(`${c.pp} PM`);
+  if (c.gp > 0) parts.push(`${c.gp} GM`);
+  if (c.sp > 0) parts.push(`${c.sp} SM`);
+  if (c.cp > 0) parts.push(`${c.cp} KM`);
+  return parts.join(", ");
+}
+function getItemCostCp(item, standard) {
+  if (item.alwaysGold || standard === "gold") {
+    return item.phbUnits * 100;
+  } else {
+    return item.phbUnits * 10;
+  }
+}
+function getCoinWeight(coins) {
+  const count = (coins.pp || 0) + (coins.gp || 0) + (coins.sp || 0) + (coins.cp || 0);
+  const kg = count / 50 * 0.5;
+  return { count, kg: kg.toFixed(2) };
+}
+function App() {
+  const [role, setRole] = useState("player");
+  const [standard, setStandard] = useState("silver");
+  const [characters, setCharacters] = useState(INITIAL_CHARACTERS);
+  const [activeCharId, setActiveCharId] = useState(INITIAL_CHARACTERS[1].id);
+  const [shopTabs, setShopTabs] = useState(INITIAL_SHOP_TABS);
+  const [logs, setLogs] = useState(INITIAL_LOGS);
+  const [pendingRequests, setPendingRequests] = useState([]);
+  const [toast, setToast] = useState(null);
+  const [loaded, setLoaded] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(FIREBASE_ENABLED ? "connecting" : "local");
+  const dbRef = useRef(null);
+  const lastSynced = useRef({});
+  const [dmPassword, setDmPassword] = useState("dm2024");
+  const [isDmUnlocked, setIsDmUnlocked] = useState(false);
+  const [dmPasswordInput, setDmPasswordInput] = useState("");
+  const [loggedInPlayerId, setLoggedInPlayerId] = useState(null);
+  const [loginNameInput, setLoginNameInput] = useState("");
+  const [loginPasswordInput, setLoginPasswordInput] = useState("");
+  const [isPartyUnlocked, setIsPartyUnlocked] = useState(false);
+  const [partyPasswordInput, setPartyPasswordInput] = useState("");
+  const [playerTab, setPlayerTab] = useState(INITIAL_SHOP_TABS[0].id);
+  const [dmTab, setDmTab] = useState("overview");
+  const [manualExpenseAmount, setManualExpenseAmount] = useState("");
+  const [manualExpenseCoin, setManualExpenseCoin] = useState("sp");
+  const [manualExpenseReason, setManualExpenseReason] = useState("");
+  const [transferTargetId, setTransferTargetId] = useState(INITIAL_CHARACTERS[0].id);
+  const [transferAmount, setTransferAmount] = useState("");
+  const [transferCoinType, setTransferCoinType] = useState("gp");
+  const [bankAmountGp, setBankAmountGp] = useState("");
+  const [lootType, setLootType] = useState("weapons_raw");
+  const [lootBaseValue, setLootBaseValue] = useState("");
+  const [lootCoinUnit, setLootCoinUnit] = useState("sp");
+  const [lootDescription, setLootDescription] = useState("");
+  const [dmTargetId, setDmTargetId] = useState("all");
+  const [dmCustomTitle, setDmCustomTitle] = useState("");
+  const [dmCustomAmount, setDmCustomAmount] = useState("");
+  const [dmCustomCoin, setDmCustomCoin] = useState("gp");
+  const [dmCustomMode, setDmCustomMode] = useState("deduct");
+  const [newCharName, setNewCharName] = useState("");
+  const [newCharRole, setNewCharRole] = useState("");
+  const [newCharPassword, setNewCharPassword] = useState("1234");
+  const [newDmPasswordInput, setNewDmPasswordInput] = useState("");
+  const [selectedShopTabId, setSelectedShopTabId] = useState(INITIAL_SHOP_TABS[0].id);
+  const [newTabName, setNewTabName] = useState("");
+  const [newTabDesc, setNewTabDesc] = useState("");
+  const [editingTabName, setEditingTabName] = useState("");
+  const [editingTabDesc, setEditingTabDesc] = useState("");
+  const [itemForm, setItemForm] = useState({
+    id: null,
+    name: "",
+    phbUnits: "",
+    alwaysGold: false,
+    isUpgrade: false,
+    desc: ""
+  });
+  const notify = (message, type = "success") => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3500);
+  };
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("dnd55_economy_state_v3");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.characters) setCharacters(parsed.characters);
+        if (parsed.shopTabs && parsed.shopTabs.length > 0) {
+          setShopTabs(parsed.shopTabs);
+          setPlayerTab(parsed.shopTabs[0].id);
+          setSelectedShopTabId(parsed.shopTabs[0].id);
+        }
+        if (parsed.logs) setLogs(parsed.logs);
+        if (parsed.pendingRequests) setPendingRequests(parsed.pendingRequests);
+        if (parsed.standard) setStandard(parsed.standard);
+        if (parsed.dmPassword) setDmPassword(parsed.dmPassword);
+      }
+      const params = new URLSearchParams(window.location.search);
+      const playerParam = params.get("player");
+      if (playerParam) {
+        setRole("player");
+        setLoginNameInput(playerParam);
+      }
+    } catch (e) {
+      console.error("Fehler beim Laden:", e);
+    }
+    if (!FIREBASE_ENABLED) {
+      setLoaded(true);
+      return;
+    }
+    if (!window.firebase) {
+      console.error("Firebase-SDK nicht geladen.");
+      setSyncStatus("error");
+      setLoaded(true);
+      return;
+    }
+    let ref;
+    try {
+      if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+      ref = firebase.database().ref(FIREBASE_ROOT);
+      dbRef.current = ref;
+    } catch (e) {
+      console.error("Firebase-Fehler:", e);
+      setSyncStatus("error");
+      setLoaded(true);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setSyncStatus((s) => s === "live" ? s : "error");
+      setLoaded(true);
+    }, 8e3);
+    const handleSnapshot = (snap) => {
+      clearTimeout(timer);
+      const data = snap.val();
+      if (data) {
+        const next = {};
+        SYNC_KEYS.forEach((k) => {
+          const listKey = k === "logs" || k === "pendingRequests";
+          if (listKey || data[k] != null) {
+            next[k] = SYNC_NORMALIZERS[k](data[k]);
+            lastSynced.current[k] = JSON.stringify(next[k]);
+          }
+        });
+        if (next.characters) setCharacters(next.characters);
+        if (next.shopTabs && next.shopTabs.length > 0) setShopTabs(next.shopTabs);
+        if (next.logs) setLogs(next.logs);
+        if (next.pendingRequests) setPendingRequests(next.pendingRequests);
+        if (next.standard) setStandard(next.standard);
+      }
+      setSyncStatus("live");
+      setLoaded(true);
+    };
+    ref.on("value", handleSnapshot, (err) => {
+      console.error("Firebase Lesefehler:", err);
+      clearTimeout(timer);
+      setSyncStatus("error");
+      setLoaded(true);
+    });
+    return () => {
+      clearTimeout(timer);
+      ref.off("value", handleSnapshot);
+    };
+  }, []);
+  useEffect(() => {
+    if (!loaded) return;
+    try {
+      localStorage.setItem(
+        "dnd55_economy_state_v3",
+        JSON.stringify({ characters, shopTabs, logs, pendingRequests, standard, dmPassword })
+      );
+    } catch (e) {
+      console.error("Fehler beim Speichern:", e);
+    }
+    if (syncStatus !== "live" || !dbRef.current) return;
+    const values = { characters, shopTabs, logs, pendingRequests, standard };
+    const updates = {};
+    SYNC_KEYS.forEach((k) => {
+      const json = JSON.stringify(values[k]);
+      if (lastSynced.current[k] !== json) {
+        updates[k] = cleanForDb(values[k]);
+        lastSynced.current[k] = json;
+      }
+    });
+    if (Object.keys(updates).length > 0) {
+      dbRef.current.update(updates).catch((e) => {
+        console.error("Firebase Schreibfehler:", e);
+        setSyncStatus("error");
+      });
+    }
+  }, [loaded, syncStatus, characters, shopTabs, logs, pendingRequests, standard, dmPassword]);
+  const currentEditorShopTab = useMemo(
+    () => shopTabs.find((t) => t.id === selectedShopTabId) || shopTabs[0],
+    [shopTabs, selectedShopTabId]
+  );
+  useEffect(() => {
+    if (currentEditorShopTab) {
+      setEditingTabName(currentEditorShopTab.name);
+      setEditingTabDesc(currentEditorShopTab.description || "");
+    }
+  }, [currentEditorShopTab]);
+  const loggedInPlayer = useMemo(
+    () => characters.find((c) => c.id === loggedInPlayerId && !c.isParty) || null,
+    [characters, loggedInPlayerId]
+  );
+  const partyChar = useMemo(
+    () => characters.find((c) => c.isParty) || null,
+    [characters]
+  );
+  const visiblePlayerTabs = useMemo(() => {
+    const list = [];
+    if (loggedInPlayer) list.push(loggedInPlayer);
+    if (partyChar) list.push(partyChar);
+    return list;
+  }, [loggedInPlayer, partyChar]);
+  const activeChar = useMemo(
+    () => visiblePlayerTabs.find((c) => c.id === activeCharId) || loggedInPlayer || partyChar || characters[0],
+    [visiblePlayerTabs, activeCharId, loggedInPlayer, partyChar, characters]
+  );
+  const isCurrentTabUnlocked = useMemo(() => {
+    if (!loggedInPlayer || !activeChar) return false;
+    if (activeChar.id === loggedInPlayer.id) return true;
+    if (activeChar.isParty) return isPartyUnlocked;
+    return false;
+  }, [loggedInPlayer, activeChar, isPartyUnlocked]);
+  const addLog = (actor, type, title, amountText, source = "Spieler") => {
+    const newEntry = {
+      id: "log_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+      actor,
+      type,
+      title,
+      amountText,
+      source,
+      timestamp: (/* @__PURE__ */ new Date()).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })
+    };
+    setLogs((prev) => [newEntry, ...prev.slice(0, 99)]);
+  };
+  const handlePlayerLogin = (e) => {
+    e.preventDefault();
+    const query = loginNameInput.trim().toLowerCase();
+    if (!query) {
+      notify("Bitte deinen Charakternamen eingeben.", "error");
+      return;
+    }
+    const matchedChar = characters.find(
+      (c) => !c.isParty && (c.name.toLowerCase() === query || c.id.toLowerCase() === query)
+    );
+    if (!matchedChar) {
+      notify("Kein Charakter mit diesem Namen gefunden.", "error");
+      return;
+    }
+    const expected = matchedChar.password || "1234";
+    if (loginPasswordInput === expected) {
+      setLoggedInPlayerId(matchedChar.id);
+      setActiveCharId(matchedChar.id);
+      setLoginPasswordInput("");
+      setIsPartyUnlocked(false);
+      notify(`Willkommen zurück, ${matchedChar.name}!`);
+    } else {
+      notify("Falsches Passwort!", "error");
+    }
+  };
+  const handlePlayerLogout = () => {
+    setLoggedInPlayerId(null);
+    setIsPartyUnlocked(false);
+    notify("Erfolgreich abgemeldet.");
+  };
+  const handleUnlockParty = (e) => {
+    e.preventDefault();
+    if (!partyChar) return;
+    const expected = partyChar.password || "1234";
+    if (partyPasswordInput === expected) {
+      setIsPartyUnlocked(true);
+      setPartyPasswordInput("");
+      notify("Gruppenkasse freigeschaltet.");
+    } else {
+      notify("Falsches Passwort!", "error");
+    }
+  };
+  const handleCopyInviteLink = (char) => {
+    try {
+      const baseUrl = window.location.href.split("?")[0].split("#")[0];
+      const inviteUrl = `${baseUrl}?player=${encodeURIComponent(char.name)}`;
+      navigator.clipboard.writeText(inviteUrl);
+      notify(`Link für ${char.name} kopiert! (Passwort: ${char.password || "1234"})`);
+    } catch {
+      notify(`Passwort: ${char.password || "1234"}`);
+    }
+  };
+  const handleUnlockDm = (e) => {
+    e.preventDefault();
+    if (dmPasswordInput === dmPassword) {
+      setIsDmUnlocked(true);
+      setDmPasswordInput("");
+      notify("DM-Zentrale entsperrt.");
+    } else {
+      notify("Falsches Masterpasswort!", "error");
+    }
+  };
+  const handleLockDm = () => {
+    setIsDmUnlocked(false);
+    setRole("player");
+    notify("DM-Zentrale gesperrt.");
+  };
+  const handleManualExpense = () => {
+    var _a;
+    const val = parseInt(manualExpenseAmount, 10);
+    if (!val || val <= 0) {
+      notify("Bitte gültigen Betrag eingeben.", "error");
+      return;
+    }
+    const deltaCp = val * COIN_VALUES[manualExpenseCoin];
+    const currentCp = getTotalCopper(activeChar.coins);
+    if (currentCp < deltaCp) {
+      notify("Nicht genügend Münzen vorhanden!", "error");
+      return;
+    }
+    const updatedCoins = deductCopperFromCoins(activeChar.coins, deltaCp);
+    setCharacters((prev) => prev.map((c) => c.id === activeChar.id ? { ...c, coins: updatedCoins } : c));
+    const coinLabel = (_a = COIN_META.find((m) => m.key === manualExpenseCoin)) == null ? void 0 : _a.short;
+    addLog(activeChar.name, "expense", manualExpenseReason.trim() || "Ausgabe", `-${val} ${coinLabel}`, "Spieler");
+    setManualExpenseAmount("");
+    setManualExpenseReason("");
+    notify("Ausgabe verbucht.");
+  };
+  const handleBuyMarketItem = (item) => {
+    const costCp = getItemCostCp(item, standard);
+    const updatedCoins = deductCopperFromCoins(activeChar.coins, costCp);
+    if (!updatedCoins) {
+      notify("Nicht genug Vermögen für diesen Kauf.", "error");
+      return;
+    }
+    setCharacters(
+      (prev) => prev.map((c) => {
+        if (c.id !== activeChar.id) return c;
+        const newUpgrades = item.isUpgrade ? [...c.upgrades || [], item.name] : c.upgrades;
+        return { ...c, coins: updatedCoins, upgrades: newUpgrades };
+      })
+    );
+    addLog(activeChar.name, "expense", `Kauf: ${item.name}`, `-${formatCurrency(costCp, standard)}`, "Spieler");
+    notify(`Gekauft: ${item.name}`);
+  };
+  const handleTransfer = () => {
+    var _a;
+    const val = parseInt(transferAmount, 10);
+    if (!val || val <= 0) return;
+    const deltaCp = val * COIN_VALUES[transferCoinType];
+    const senderNewCoins = deductCopperFromCoins(activeChar.coins, deltaCp);
+    if (!senderNewCoins) {
+      notify("Nicht genügend Münzen für Transfer.", "error");
+      return;
+    }
+    const targetChar = characters.find((c) => c.id === transferTargetId);
+    if (!targetChar) return;
+    setCharacters(
+      (prev) => prev.map((c) => {
+        if (c.id === activeChar.id) return { ...c, coins: senderNewCoins };
+        if (c.id === targetChar.id) {
+          return { ...c, coins: copperToCoins(getTotalCopper(c.coins) + deltaCp) };
+        }
+        return c;
+      })
+    );
+    const coinLabel = (_a = COIN_META.find((m) => m.key === transferCoinType)) == null ? void 0 : _a.short;
+    addLog(activeChar.name, "transfer", `Transfer an ${targetChar.name}`, `${val} ${coinLabel}`, "Spieler");
+    setTransferAmount("");
+    notify("Überweisung erfolgreich.");
+  };
+  const handleBankAction = (mode) => {
+    const gpVal = parseInt(bankAmountGp, 10);
+    if (!gpVal || gpVal <= 0) return;
+    if (mode === "deposit") {
+      const feeGp = Math.max(1, Math.ceil(gpVal * 0.03));
+      const totalCostCp = (gpVal + feeGp) * COIN_VALUES.gp;
+      const updatedCoins = deductCopperFromCoins(activeChar.coins, totalCostCp);
+      if (!updatedCoins) {
+        notify("Nicht genug Gold inkl. 3% Bankgebühr.", "error");
+        return;
+      }
+      setCharacters(
+        (prev) => prev.map(
+          (c) => c.id === activeChar.id ? { ...c, coins: updatedCoins, bankNotesGp: (c.bankNotesGp || 0) + gpVal } : c
+        )
+      );
+      addLog(activeChar.name, "expense", `Bank-Kreditbrief (+${gpVal} GM)`, `-${gpVal + feeGp} GM`, "Bank");
+      notify(`Kreditbrief über ${gpVal} GM ausgestellt.`);
+    } else {
+      if ((activeChar.bankNotesGp || 0) < gpVal) {
+        notify("Nicht genügend Kreditbrief-Guthaben.", "error");
+        return;
+      }
+      const req = {
+        id: "req_" + Date.now(),
+        type: "bank_withdraw",
+        charId: activeChar.id,
+        charName: activeChar.name,
+        title: `Kreditbrief einlösen (${gpVal} GM)`,
+        payoutCp: gpVal * COIN_VALUES.gp,
+        bankNoteDeductGp: gpVal,
+        timestamp: (/* @__PURE__ */ new Date()).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })
+      };
+      setPendingRequests((prev) => [req, ...prev]);
+      notify("Auszahlungsanfrage an DM gesendet.");
+    }
+    setBankAmountGp("");
+  };
+  const lootMultiplier = useMemo(() => {
+    switch (lootType) {
+      case "gems":
+        return { factor: 1, label: "Edelsteine (100%)" };
+      case "art_collector":
+        return { factor: 0.85, label: "Kunst Sammler (85%)" };
+      case "art_pawn":
+        return { factor: 0.5, label: "Kunst Pfandleiher (50%)" };
+      case "weapons_repaired":
+        return { factor: 0.5, label: "Aufbereitet (50%)" };
+      case "weapons_raw":
+      default:
+        return { factor: 0.25, label: "Rohbeute (25%)" };
+    }
+  }, [lootType]);
+  const calculatedLootPayoutCp = useMemo(() => {
+    const raw = parseFloat(lootBaseValue);
+    if (!raw || raw <= 0) return 0;
+    return Math.floor(raw * COIN_VALUES[lootCoinUnit] * lootMultiplier.factor);
+  }, [lootBaseValue, lootCoinUnit, lootMultiplier]);
+  const handleRequestLootSale = () => {
+    if (calculatedLootPayoutCp <= 0) return;
+    const req = {
+      id: "req_" + Date.now(),
+      type: "loot_sale",
+      charId: activeChar.id,
+      charName: activeChar.name,
+      title: `Beuteverkauf: ${lootMultiplier.label}${lootDescription.trim() ? " – " + lootDescription.trim() : ""}`,
+      payoutCp: calculatedLootPayoutCp,
+      bankNoteDeductGp: 0,
+      timestamp: (/* @__PURE__ */ new Date()).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })
+    };
+    setPendingRequests((prev) => [req, ...prev]);
+    setLootBaseValue("");
+    setLootDescription("");
+    notify("Verkaufsanfrage an DM gesendet!");
+  };
+  const handleApproveRequest = (req) => {
+    const targetChar = characters.find((c) => c.id === req.charId);
+    if (!targetChar) {
+      setPendingRequests((prev) => prev.filter((r) => r.id !== req.id));
+      return;
+    }
+    setCharacters(
+      (prev) => prev.map((c) => {
+        if (c.id !== req.charId) return c;
+        const nextCp = getTotalCopper(c.coins) + req.payoutCp;
+        const nextNotes = req.type === "bank_withdraw" ? (c.bankNotesGp || 0) - req.bankNoteDeductGp : c.bankNotesGp || 0;
+        return { ...c, coins: copperToCoins(nextCp), bankNotesGp: nextNotes };
+      })
+    );
+    addLog(targetChar.name, "income", req.title, `+${formatCurrency(req.payoutCp, standard)}`, "DM");
+    setPendingRequests((prev) => prev.filter((r) => r.id !== req.id));
+    notify("Anfrage genehmigt.");
+  };
+  const handleRejectRequest = (req) => {
+    setPendingRequests((prev) => prev.filter((r) => r.id !== req.id));
+    notify("Anfrage abgelehnt.");
+  };
+  const handleAddShopTab = (e) => {
+    e.preventDefault();
+    if (!newTabName.trim()) return;
+    const newTab = {
+      id: "tab_" + Date.now(),
+      name: newTabName.trim(),
+      description: newTabDesc.trim() || "Händlerangebot.",
+      items: []
+    };
+    setShopTabs((prev) => [...prev, newTab]);
+    setSelectedShopTabId(newTab.id);
+    setNewTabName("");
+    setNewTabDesc("");
+    notify("Shop-Reiter erstellt.");
+  };
+  const handleSaveShopItem = (e) => {
+    e.preventDefault();
+    if (!currentEditorShopTab) return;
+    const priceNum = parseFloat(itemForm.phbUnits);
+    if (!itemForm.name.trim() || !priceNum || priceNum <= 0) return;
+    setShopTabs(
+      (prev) => prev.map((tab) => {
+        if (tab.id !== currentEditorShopTab.id) return tab;
+        if (itemForm.id) {
+          return {
+            ...tab,
+            items: tab.items.map((it) => it.id === itemForm.id ? { ...it, ...itemForm, phbUnits: priceNum } : it)
+          };
+        } else {
+          const newItem = { ...itemForm, id: "item_" + Date.now(), phbUnits: priceNum };
+          return { ...tab, items: [...tab.items, newItem] };
+        }
+      })
+    );
+    notify("Artikel gespeichert.");
+    setItemForm({ id: null, name: "", phbUnits: "", alwaysGold: false, isUpgrade: false, desc: "" });
+  };
+  const handleExportJson = () => {
+    const dataStr = JSON.stringify({ characters, shopTabs, logs, pendingRequests, standard, dmPassword }, null, 2);
+    const blob = new Blob([dataStr], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "dnd55-wirtschaft.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+  const currentLifestyleObj = LIFESTYLES.find((l) => l.id === activeChar.lifestyle) || LIFESTYLES[1];
+  const currentLifestyleCostCp = standard === "silver" ? currentLifestyleObj.silverCostCp : currentLifestyleObj.goldCostCp;
+  const activeWeight = getCoinWeight(activeChar.coins);
+  const fmt = (cp) => formatCurrency(cp, standard);
+  const inp = "px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-sm text-white focus:outline-none focus:border-amber-500";
+  const tabBtn = (on) => `px-3.5 py-2 rounded-xl text-sm font-medium transition border ${on ? "bg-amber-500/15 border-amber-500 text-amber-200" : "bg-slate-950/70 border-slate-800 text-slate-400 hover:text-slate-200"}`;
+  const btnPrimary = "px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold transition disabled:opacity-40 disabled:cursor-not-allowed";
+  const btnGhost = "px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-slate-200 transition cursor-pointer";
+  const btnDanger = "px-3 py-1.5 rounded-lg bg-red-950/60 hover:bg-red-900 border border-red-700/50 text-xs font-semibold text-red-200 transition";
+  const coinOptions = COIN_META.map((m) => /* @__PURE__ */ React.createElement("option", { key: m.key, value: m.key }, m.short));
+  const panelBox = "bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4";
+  const handleSetLifestyle = (id) => {
+    setCharacters((prev) => prev.map((c) => c.id === activeChar.id ? { ...c, lifestyle: id } : c));
+    notify("Lebensstil geändert.");
+  };
+  const handlePayLifestyle = () => {
+    const updated = deductCopperFromCoins(activeChar.coins, currentLifestyleCostCp);
+    if (!updated) {
+      notify("Nicht genug Münzen für den Wochenunterhalt.", "error");
+      return;
+    }
+    setCharacters((prev) => prev.map((c) => c.id === activeChar.id ? { ...c, coins: updated } : c));
+    addLog(activeChar.name, "expense", `Lebensstil: ${currentLifestyleObj.name} (1 Woche)`, `-${fmt(currentLifestyleCostCp)}`, "Spieler");
+    notify("Wochenunterhalt bezahlt.");
+  };
+  const getDmTargets = () => dmTargetId === "all" ? characters.filter((c) => !c.isParty) : characters.filter((c) => c.id === dmTargetId);
+  const applyDmChange = (title, deltaFn) => {
+    const targets = getDmTargets();
+    if (targets.length === 0) {
+      notify("Kein Ziel ausgewählt.", "error");
+      return;
+    }
+    const changes = {};
+    targets.forEach((ch) => {
+      const delta = deltaFn(ch);
+      if (!delta) return;
+      const cur = getTotalCopper(ch.coins);
+      const applied = delta > 0 ? delta : -Math.min(cur, -delta);
+      if (!applied) return;
+      changes[ch.id] = { next: cur + applied, applied, name: ch.name };
+    });
+    const ids = Object.keys(changes);
+    if (ids.length === 0) {
+      notify("Keine Änderung (Betrag 0 oder Konto leer).", "error");
+      return;
+    }
+    setCharacters((prev) => prev.map((c) => changes[c.id] ? { ...c, coins: copperToCoins(changes[c.id].next) } : c));
+    ids.forEach((id) => {
+      const ch = changes[id];
+      addLog(ch.name, ch.applied > 0 ? "income" : "dm_event", title, `${ch.applied > 0 ? "+" : "-"}${fmt(Math.abs(ch.applied))}`, "DM");
+    });
+    notify(`„${title}“ bei ${ids.length} Konto/Konten angewendet.`);
+  };
+  const handleCustomEvent = (e) => {
+    e.preventDefault();
+    const amt = parseInt(dmCustomAmount, 10);
+    if (!amt || amt <= 0) {
+      notify("Bitte gültigen Betrag eingeben.", "error");
+      return;
+    }
+    const unitCp = amt * COIN_VALUES[dmCustomCoin];
+    const award = dmCustomMode === "award";
+    applyDmChange(dmCustomTitle.trim() || (award ? "Belohnung" : "Abzug"), () => award ? unitCp : -unitCp);
+    setDmCustomAmount("");
+    setDmCustomTitle("");
+  };
+  const handleWeeklyUpkeep = () => {
+    applyDmChange("Wochenunterhalt (Lebensstil)", (ch) => {
+      const l = LIFESTYLES.find((x) => x.id === ch.lifestyle) || LIFESTYLES[1];
+      return -(standard === "silver" ? l.silverCostCp : l.goldCostCp);
+    });
+  };
+  const handleDistributeParty = () => {
+    if (!partyChar) return;
+    const players = characters.filter((c) => !c.isParty);
+    const total = getTotalCopper(partyChar.coins);
+    const share = players.length > 0 ? Math.floor(total / players.length) : 0;
+    if (share <= 0) {
+      notify("Die Gruppenkasse ist zu leer zum Verteilen.", "error");
+      return;
+    }
+    setCharacters((prev) => prev.map((c) => c.isParty ? { ...c, coins: copperToCoins(total - share * players.length) } : { ...c, coins: copperToCoins(getTotalCopper(c.coins) + share) }));
+    addLog("Gruppenkasse", "transfer", "Gruppenkasse gleichmäßig verteilt", `${fmt(share)} pro Spieler`, "DM");
+    notify("Gruppenkasse verteilt.");
+  };
+  const updateChar = (id, patch) => setCharacters((prev) => prev.map((c) => c.id === id ? { ...c, ...patch } : c));
+  const updateCharCoin = (id, key, value) => setCharacters((prev) => prev.map((c) => c.id === id ? { ...c, coins: { ...c.coins, [key]: Math.max(0, parseInt(value, 10) || 0) } } : c));
+  const handleAddCharacter = (e) => {
+    e.preventDefault();
+    const name = newCharName.trim();
+    if (!name) {
+      notify("Bitte einen Namen eingeben.", "error");
+      return;
+    }
+    if (characters.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
+      notify("Diesen Namen gibt es schon.", "error");
+      return;
+    }
+    const nc = {
+      id: "char_" + Date.now(),
+      name,
+      role: newCharRole.trim() || "Abenteurer",
+      isParty: false,
+      password: newCharPassword || "1234",
+      lifestyle: "modest",
+      coins: { pp: 0, gp: 0, sp: 0, cp: 0 },
+      bankNotesGp: 0,
+      upgrades: []
+    };
+    setCharacters((prev) => [...prev, nc]);
+    setNewCharName("");
+    setNewCharRole("");
+    setNewCharPassword("1234");
+    notify(`${name} wurde angelegt.`);
+  };
+  const handleDeleteCharacter = (c) => {
+    if (c.isParty) return;
+    if (!window.confirm(`„${c.name}“ wirklich löschen?`)) return;
+    setCharacters((prev) => prev.filter((x) => x.id !== c.id));
+    setPendingRequests((prev) => prev.filter((r) => r.charId !== c.id));
+    if (loggedInPlayerId === c.id) setLoggedInPlayerId(null);
+    notify(`${c.name} wurde gelöscht.`);
+  };
+  const handleChangeDmPassword = (e) => {
+    e.preventDefault();
+    if (newDmPasswordInput.trim().length < 4) {
+      notify("Das Passwort braucht mindestens 4 Zeichen.", "error");
+      return;
+    }
+    setDmPassword(newDmPasswordInput.trim());
+    setNewDmPasswordInput("");
+    notify("DM-Passwort geändert (gilt nur auf diesem Gerät).");
+  };
+  const resetItemForm = () => setItemForm({ id: null, name: "", phbUnits: "", alwaysGold: false, isUpgrade: false, desc: "" });
+  const handleEditItem = (it) => setItemForm({ id: it.id, name: it.name, phbUnits: String(it.phbUnits), alwaysGold: !!it.alwaysGold, isUpgrade: !!it.isUpgrade, desc: it.desc || "" });
+  const handleDeleteItem = (itemId) => {
+    if (!currentEditorShopTab) return;
+    setShopTabs((prev) => prev.map((t) => t.id === currentEditorShopTab.id ? { ...t, items: t.items.filter((i) => i.id !== itemId) } : t));
+    if (itemForm.id === itemId) resetItemForm();
+    notify("Artikel gelöscht.");
+  };
+  const handleUpdateShopTab = () => {
+    if (!currentEditorShopTab || !editingTabName.trim()) {
+      notify("Der Reiter braucht einen Namen.", "error");
+      return;
+    }
+    setShopTabs((prev) => prev.map((t) => t.id === currentEditorShopTab.id ? { ...t, name: editingTabName.trim(), description: editingTabDesc.trim() } : t));
+    notify("Reiter gespeichert.");
+  };
+  const handleDeleteShopTab = () => {
+    if (!currentEditorShopTab) return;
+    if (shopTabs.length <= 1) {
+      notify("Mindestens ein Shop-Reiter muss bleiben.", "error");
+      return;
+    }
+    if (!window.confirm(`Reiter „${currentEditorShopTab.name}“ samt Artikeln löschen?`)) return;
+    const rest = shopTabs.filter((t) => t.id !== currentEditorShopTab.id);
+    setShopTabs(rest);
+    setSelectedShopTabId(rest[0].id);
+    resetItemForm();
+    notify("Reiter gelöscht.");
+  };
+  const handleImportJson = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const d = JSON.parse(reader.result);
+        if (!Array.isArray(d.characters)) throw new Error("Format");
+        setCharacters(SYNC_NORMALIZERS.characters(d.characters));
+        if (d.shopTabs && d.shopTabs.length) setShopTabs(SYNC_NORMALIZERS.shopTabs(d.shopTabs));
+        setLogs(d.logs || []);
+        setPendingRequests(d.pendingRequests || []);
+        if (d.standard) setStandard(d.standard);
+        notify("Import erfolgreich.");
+      } catch (err) {
+        notify("Ungültige Datei.", "error");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+  const handleResetAll = () => {
+    if (!window.confirm("Wirklich ALLES zurücksetzen? Bei aktivem Live-Sync gilt das für alle Geräte.")) return;
+    setCharacters(INITIAL_CHARACTERS);
+    setShopTabs(INITIAL_SHOP_TABS);
+    setLogs([]);
+    setPendingRequests([]);
+    setSelectedShopTabId(INITIAL_SHOP_TABS[0].id);
+    setLoggedInPlayerId(null);
+    notify("Alles zurückgesetzt.");
+  };
+  const SPECIAL_PLAYER_TABS = [
+    { id: "__life", label: "Lebensstil" },
+    { id: "__bank", label: "Bank" },
+    { id: "__loot", label: "Beute verkaufen" },
+    { id: "__log", label: "Protokoll" }
+  ];
+  const isSpecialTab = SPECIAL_PLAYER_TABS.some((t) => t.id === playerTab);
+  const activeShopTab = isSpecialTab ? null : shopTabs.find((t) => t.id === playerTab) || shopTabs[0] || null;
+  const activeTabId = isSpecialTab ? playerTab : activeShopTab ? activeShopTab.id : null;
+  const activeCash = getTotalCopper(activeChar.coins);
+  const myRequests = pendingRequests.filter((r) => r.charId === activeChar.id);
+  const myLogs = logs.filter((l) => l.actor === activeChar.name).slice(0, 25);
+  const bankGp = parseInt(bankAmountGp, 10) || 0;
+  const bankFee = bankGp > 0 ? Math.max(1, Math.ceil(bankGp * 0.03)) : 0;
+  const myRequestsBlock = myRequests.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "p-3 rounded-xl bg-emerald-950/20 border border-emerald-500/30 space-y-1" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-semibold text-emerald-300" }, "Wartet auf Bestätigung des DM"), myRequests.map((r) => /* @__PURE__ */ React.createElement("div", { key: r.id, className: "text-xs text-slate-300 flex justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", null, r.title), /* @__PURE__ */ React.createElement("span", { className: "text-amber-300 whitespace-nowrap" }, "+", fmt(r.payoutCp)))));
+  const playerPanel = /* @__PURE__ */ React.createElement("div", { className: panelBox }, /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-2 border-b border-slate-800 pb-3" }, shopTabs.map((t) => /* @__PURE__ */ React.createElement("button", { key: t.id, onClick: () => setPlayerTab(t.id), className: tabBtn(activeTabId === t.id) }, t.name)), SPECIAL_PLAYER_TABS.map((t) => /* @__PURE__ */ React.createElement("button", { key: t.id, onClick: () => setPlayerTab(t.id), className: tabBtn(activeTabId === t.id) }, t.label))), activeShopTab && /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-slate-400" }, activeShopTab.description), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3" }, activeShopTab.items.map((item) => {
+    const cost = getItemCostCp(item, standard);
+    const canAfford = activeCash >= cost;
+    return /* @__PURE__ */ React.createElement("div", { key: item.id, className: "p-4 rounded-xl bg-slate-950/60 border border-slate-800 flex flex-col gap-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex justify-between items-start gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "font-semibold text-sm text-white" }, item.name), item.isUpgrade && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full border border-cyan-700/50 bg-cyan-950/50 text-cyan-300" }, "Upgrade")), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-slate-400 flex-1" }, item.desc), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-bold text-amber-300" }, fmt(cost)), /* @__PURE__ */ React.createElement("button", { disabled: !canAfford, onClick: () => handleBuyMarketItem(item), className: btnPrimary }, "Kaufen")));
+  })), activeShopTab.items.length === 0 && /* @__PURE__ */ React.createElement("p", { className: "text-sm text-slate-500" }, "In diesem Reiter gibt es noch keine Artikel."), (activeChar.upgrades || []).length > 0 && /* @__PURE__ */ React.createElement("div", { className: "pt-3 border-t border-slate-800" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-semibold text-slate-300 mb-2" }, "Erworbene Upgrades"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-2" }, activeChar.upgrades.map((u, i) => /* @__PURE__ */ React.createElement("span", { key: i, className: "text-xs px-2 py-1 rounded-full border border-cyan-700/50 bg-cyan-950/40 text-cyan-200" }, u))))), activeTabId === "__life" && /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-2 gap-3" }, LIFESTYLES.map((l) => {
+    const cost = standard === "silver" ? l.silverCostCp : l.goldCostCp;
+    const isCurrent = l.id === activeChar.lifestyle;
+    return /* @__PURE__ */ React.createElement("div", { key: l.id, className: `p-4 rounded-xl border space-y-2 ${isCurrent ? "border-amber-500 bg-amber-950/20" : "border-slate-800 bg-slate-950/60"}` }, /* @__PURE__ */ React.createElement("div", { className: "flex justify-between items-center gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "font-semibold text-sm text-white" }, l.name), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full border ${l.effectColor}` }, l.effectBadge)), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-slate-400" }, l.description), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-bold text-amber-300" }, fmt(cost), " / Woche"), /* @__PURE__ */ React.createElement("button", { disabled: isCurrent, onClick: () => handleSetLifestyle(l.id), className: btnPrimary }, isCurrent ? "Aktiv" : "Wählen")));
+  })), /* @__PURE__ */ React.createElement("button", { onClick: handlePayLifestyle, className: btnGhost }, "Wochenunterhalt bezahlen (", fmt(currentLifestyleCostCp), ")")), activeTabId === "__bank" && /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-slate-400" }, "Ein Kreditbrief kostet 3 % Gebühr (mindestens 1 GM). Das Einlösen muss der DM bestätigen."), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap items-center gap-2" }, /* @__PURE__ */ React.createElement("input", { type: "number", min: "1", placeholder: "GM-Betrag", value: bankAmountGp, onChange: (e) => setBankAmountGp(e.target.value), className: `${inp} w-32` }), /* @__PURE__ */ React.createElement("button", { onClick: () => handleBankAction("deposit"), className: btnPrimary }, "Kreditbrief kaufen"), /* @__PURE__ */ React.createElement("button", { onClick: () => handleBankAction("withdraw"), className: btnGhost }, "Einlösen anfragen")), bankGp > 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-slate-400" }, "Kosten für den Kreditbrief: ", bankGp + bankFee, " GM (davon ", bankFee, " GM Gebühr)"), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-cyan-300" }, "Kreditbriefe im Besitz: ", activeChar.bankNotesGp || 0, " GM"), myRequestsBlock), activeTabId === "__loot" && /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-slate-400" }, "Trage den Schätzwert deiner Beute ein. Der DM bestätigt den Verkauf zum angegebenen Anteil."), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-2 gap-3" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-slate-400" }, "Art der Beute", /* @__PURE__ */ React.createElement("select", { value: lootType, onChange: (e) => setLootType(e.target.value), className: `${inp} w-full mt-1` }, /* @__PURE__ */ React.createElement("option", { value: "weapons_raw" }, "Waffen & Rüstung, roh (25 %)"), /* @__PURE__ */ React.createElement("option", { value: "weapons_repaired" }, "Waffen & Rüstung, aufbereitet (50 %)"), /* @__PURE__ */ React.createElement("option", { value: "gems" }, "Edelsteine (100 %)"), /* @__PURE__ */ React.createElement("option", { value: "art_collector" }, "Kunst an Sammler (85 %)"), /* @__PURE__ */ React.createElement("option", { value: "art_pawn" }, "Kunst an Pfandleiher (50 %)"))), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-slate-400" }, "Beschreibung (optional)", /* @__PURE__ */ React.createElement("input", { type: "text", placeholder: "z.B. Rubine aus der Gruft", value: lootDescription, onChange: (e) => setLootDescription(e.target.value), className: `${inp} w-full mt-1` }))), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap items-center gap-2" }, /* @__PURE__ */ React.createElement("input", { type: "number", min: "1", placeholder: "Schätzwert", value: lootBaseValue, onChange: (e) => setLootBaseValue(e.target.value), className: `${inp} w-32` }), /* @__PURE__ */ React.createElement("select", { value: lootCoinUnit, onChange: (e) => setLootCoinUnit(e.target.value), className: inp }, coinOptions), /* @__PURE__ */ React.createElement("button", { disabled: calculatedLootPayoutCp <= 0, onClick: handleRequestLootSale, className: btnPrimary }, "Verkauf anfragen")), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-slate-300" }, "Auszahlung bei ", lootMultiplier.label, ": ", /* @__PURE__ */ React.createElement("strong", { className: "text-amber-300" }, fmt(calculatedLootPayoutCp))), myRequestsBlock), activeTabId === "__log" && /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, myLogs.length === 0 && /* @__PURE__ */ React.createElement("p", { className: "text-sm text-slate-500" }, "Noch keine Buchungen."), myLogs.map((l) => /* @__PURE__ */ React.createElement("div", { key: l.id, className: "flex justify-between items-center gap-3 p-2.5 rounded-lg bg-slate-950/60 border border-slate-800 text-xs" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-slate-200" }, l.title), /* @__PURE__ */ React.createElement("div", { className: "text-slate-500" }, l.timestamp, " · ", l.source)), /* @__PURE__ */ React.createElement("span", { className: `font-mono whitespace-nowrap ${String(l.amountText).startsWith("+") ? "text-emerald-400" : "text-red-300"}` }, l.amountText)))));
+  const DM_TABS = [
+    { id: "overview", label: "Übersicht" },
+    { id: "events", label: "Ereignisse & Münzen" },
+    { id: "shops", label: "Shops" },
+    { id: "chars", label: "Charaktere" },
+    { id: "log", label: "Protokoll" }
+  ];
+  const dmTargetOptions = /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("option", { value: "all" }, "Alle Spieler (ohne Gruppenkasse)"), characters.map((c) => /* @__PURE__ */ React.createElement("option", { key: c.id, value: c.id }, c.name)));
+  const dmPanel = /* @__PURE__ */ React.createElement("div", { className: panelBox }, /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-2 border-b border-slate-800 pb-3" }, DM_TABS.map((t) => /* @__PURE__ */ React.createElement("button", { key: t.id, onClick: () => setDmTab(t.id), className: tabBtn(dmTab === t.id) }, t.label))), dmTab === "overview" && /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, /* @__PURE__ */ React.createElement("div", { className: "overflow-x-auto" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-left text-xs" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "border-b border-slate-800 text-slate-400" }, /* @__PURE__ */ React.createElement("th", { className: "py-2" }, "Name"), /* @__PURE__ */ React.createElement("th", { className: "py-2" }, "Passwort"), /* @__PURE__ */ React.createElement("th", { className: "py-2" }, "Bargeld"), /* @__PURE__ */ React.createElement("th", { className: "py-2" }, "Kreditbriefe"), /* @__PURE__ */ React.createElement("th", { className: "py-2 text-right" }, "Link kopieren"))), /* @__PURE__ */ React.createElement("tbody", { className: "divide-y divide-slate-800" }, characters.map((c) => /* @__PURE__ */ React.createElement("tr", { key: c.id }, /* @__PURE__ */ React.createElement("td", { className: "py-3 font-bold" }, c.name), /* @__PURE__ */ React.createElement("td", { className: "py-3 font-mono text-amber-300" }, c.password || "1234"), /* @__PURE__ */ React.createElement("td", { className: "py-3 font-mono" }, fmt(getTotalCopper(c.coins))), /* @__PURE__ */ React.createElement("td", { className: "py-3 font-mono text-cyan-300" }, c.bankNotesGp || 0, " GM"), /* @__PURE__ */ React.createElement("td", { className: "py-3 text-right" }, !c.isParty && /* @__PURE__ */ React.createElement("button", { onClick: () => handleCopyInviteLink(c), className: "px-2 py-1 rounded bg-emerald-900 text-emerald-200 text-xs" }, "Link"))))))), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-2 pt-3 border-t border-slate-800" }, /* @__PURE__ */ React.createElement("label", { className: btnGhost }, "JSON importieren", /* @__PURE__ */ React.createElement("input", { type: "file", accept: "application/json,.json", className: "hidden", onChange: handleImportJson })), /* @__PURE__ */ React.createElement("button", { onClick: handleResetAll, className: btnDanger }, "Alles zurücksetzen"))), dmTab === "events" && /* @__PURE__ */ React.createElement("div", { className: "space-y-5" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-slate-400 block" }, "Ziel", /* @__PURE__ */ React.createElement("select", { value: dmTargetId, onChange: (e) => setDmTargetId(e.target.value), className: `${inp} w-full sm:w-80 mt-1 block` }, dmTargetOptions)), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: handleWeeklyUpkeep, className: btnGhost }, "Wochenunterhalt abziehen"), /* @__PURE__ */ React.createElement("button", { onClick: handleDistributeParty, className: btnGhost }, "Gruppenkasse gleichmäßig verteilen")), /* @__PURE__ */ React.createElement("form", { onSubmit: handleCustomEvent, className: "p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-semibold text-slate-300" }, "Eigenes Ereignis"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("input", { type: "text", placeholder: "Titel (z.B. Questbelohnung)", value: dmCustomTitle, onChange: (e) => setDmCustomTitle(e.target.value), className: `${inp} flex-1 min-w-[12rem]` }), /* @__PURE__ */ React.createElement("select", { value: dmCustomMode, onChange: (e) => setDmCustomMode(e.target.value), className: inp }, /* @__PURE__ */ React.createElement("option", { value: "award" }, "Gutschreiben"), /* @__PURE__ */ React.createElement("option", { value: "deduct" }, "Abziehen")), /* @__PURE__ */ React.createElement("input", { type: "number", min: "1", placeholder: "Betrag", value: dmCustomAmount, onChange: (e) => setDmCustomAmount(e.target.value), className: `${inp} w-24` }), /* @__PURE__ */ React.createElement("select", { value: dmCustomCoin, onChange: (e) => setDmCustomCoin(e.target.value), className: inp }, coinOptions)), /* @__PURE__ */ React.createElement("button", { type: "submit", className: btnPrimary }, "Anwenden"))), dmTab === "shops" && currentEditorShopTab && /* @__PURE__ */ React.createElement("div", { className: "space-y-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-2" }, shopTabs.map((t) => /* @__PURE__ */ React.createElement("button", { key: t.id, onClick: () => {
+    setSelectedShopTabId(t.id);
+    resetItemForm();
+  }, className: tabBtn(currentEditorShopTab.id === t.id) }, t.name))), /* @__PURE__ */ React.createElement("div", { className: "p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-semibold text-slate-300" }, "Reiter bearbeiten"), /* @__PURE__ */ React.createElement("input", { type: "text", placeholder: "Name des Reiters", value: editingTabName, onChange: (e) => setEditingTabName(e.target.value), className: `${inp} w-full` }), /* @__PURE__ */ React.createElement("input", { type: "text", placeholder: "Beschreibung", value: editingTabDesc, onChange: (e) => setEditingTabDesc(e.target.value), className: `${inp} w-full` }), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: handleUpdateShopTab, className: btnPrimary }, "Reiter speichern"), /* @__PURE__ */ React.createElement("button", { onClick: handleDeleteShopTab, className: btnDanger }, "Reiter löschen"))), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-semibold text-slate-300" }, "Artikel in „", currentEditorShopTab.name, "“"), currentEditorShopTab.items.length === 0 && /* @__PURE__ */ React.createElement("p", { className: "text-sm text-slate-500" }, "Noch keine Artikel."), currentEditorShopTab.items.map((it) => /* @__PURE__ */ React.createElement("div", { key: it.id, className: "flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-lg bg-slate-950/60 border border-slate-800 text-xs" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-slate-100 font-semibold" }, it.name), /* @__PURE__ */ React.createElement("div", { className: "text-slate-500" }, "Preis: ", fmt(getItemCostCp(it, standard)), it.alwaysGold ? " · immer Gold" : "", it.isUpgrade ? " · Upgrade" : "")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => handleEditItem(it), className: btnGhost }, "Bearbeiten"), /* @__PURE__ */ React.createElement("button", { onClick: () => handleDeleteItem(it.id), className: btnDanger }, "Löschen"))))), /* @__PURE__ */ React.createElement("form", { onSubmit: handleSaveShopItem, className: "p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-semibold text-slate-300" }, itemForm.id ? "Artikel bearbeiten" : "Neuen Artikel anlegen"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("input", { type: "text", placeholder: "Artikelname", value: itemForm.name, onChange: (e) => setItemForm({ ...itemForm, name: e.target.value }), className: `${inp} flex-1 min-w-[12rem]` }), /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "any", placeholder: "PHB-Preis", value: itemForm.phbUnits, onChange: (e) => setItemForm({ ...itemForm, phbUnits: e.target.value }), className: `${inp} w-28` })), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-slate-500" }, "Die PHB-Zahl ist der Preis im Gold-Standard in GM. Im Silber-Anker zahlt man dieselbe Zahl in SM, außer bei „immer Gold“."), /* @__PURE__ */ React.createElement("textarea", { rows: "2", placeholder: "Beschreibung", value: itemForm.desc, onChange: (e) => setItemForm({ ...itemForm, desc: e.target.value }), className: `${inp} w-full` }), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-4 text-xs text-slate-300" }, /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: itemForm.alwaysGold, onChange: (e) => setItemForm({ ...itemForm, alwaysGold: e.target.checked }) }), " immer in Gold"), /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: itemForm.isUpgrade, onChange: (e) => setItemForm({ ...itemForm, isUpgrade: e.target.checked }) }), " ist ein Upgrade (wird beim Charakter vermerkt)")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { type: "submit", className: btnPrimary }, itemForm.id ? "Änderungen speichern" : "Artikel hinzufügen"), itemForm.id && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: resetItemForm, className: btnGhost }, "Abbrechen"))), /* @__PURE__ */ React.createElement("form", { onSubmit: handleAddShopTab, className: "p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-semibold text-slate-300" }, "Neuen Shop-Reiter anlegen"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("input", { type: "text", placeholder: "Name des neuen Reiters", value: newTabName, onChange: (e) => setNewTabName(e.target.value), className: `${inp} flex-1 min-w-[12rem]` }), /* @__PURE__ */ React.createElement("input", { type: "text", placeholder: "Beschreibung (optional)", value: newTabDesc, onChange: (e) => setNewTabDesc(e.target.value), className: `${inp} flex-1 min-w-[12rem]` })), /* @__PURE__ */ React.createElement("button", { type: "submit", className: btnPrimary }, "Reiter erstellen"))), dmTab === "chars" && /* @__PURE__ */ React.createElement("div", { className: "space-y-5" }, /* @__PURE__ */ React.createElement("form", { onSubmit: handleAddCharacter, className: "p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-semibold text-slate-300" }, "Neuen Charakter anlegen"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("input", { type: "text", placeholder: "Charaktername", value: newCharName, onChange: (e) => setNewCharName(e.target.value), className: `${inp} flex-1 min-w-[12rem]` }), /* @__PURE__ */ React.createElement("input", { type: "text", placeholder: "Klasse / Rolle", value: newCharRole, onChange: (e) => setNewCharRole(e.target.value), className: `${inp} flex-1 min-w-[12rem]` }), /* @__PURE__ */ React.createElement("input", { type: "text", placeholder: "Passwort", value: newCharPassword, onChange: (e) => setNewCharPassword(e.target.value), className: `${inp} w-32` })), /* @__PURE__ */ React.createElement("button", { type: "submit", className: btnPrimary }, "Charakter anlegen")), characters.map((c) => /* @__PURE__ */ React.createElement("div", { key: c.id, className: "p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap items-center justify-between gap-2" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "font-bold text-sm text-white" }, c.name), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-slate-400" }, c.role)), !c.isParty && /* @__PURE__ */ React.createElement("button", { onClick: () => handleDeleteCharacter(c), className: btnDanger }, "Löschen")), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-4 gap-2" }, COIN_META.map((m) => /* @__PURE__ */ React.createElement("label", { key: m.key, className: "text-[11px] text-slate-400" }, m.label, /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", value: c.coins[m.key] || 0, onChange: (e) => updateCharCoin(c.id, m.key, e.target.value), className: `${inp} w-full mt-1` })))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-3 gap-2" }, /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-slate-400" }, "Passwort", /* @__PURE__ */ React.createElement("input", { type: "text", value: c.password || "", onChange: (e) => updateChar(c.id, { password: e.target.value }), className: `${inp} w-full mt-1` })), /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-slate-400" }, "Lebensstil", /* @__PURE__ */ React.createElement("select", { value: c.lifestyle, onChange: (e) => updateChar(c.id, { lifestyle: e.target.value }), className: `${inp} w-full mt-1` }, LIFESTYLES.map((l) => /* @__PURE__ */ React.createElement("option", { key: l.id, value: l.id }, l.name)))), /* @__PURE__ */ React.createElement("label", { className: "text-[11px] text-slate-400" }, "Kreditbriefe (GM)", /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", value: c.bankNotesGp || 0, onChange: (e) => updateChar(c.id, { bankNotesGp: Math.max(0, parseInt(e.target.value, 10) || 0) }), className: `${inp} w-full mt-1` }))))), /* @__PURE__ */ React.createElement("form", { onSubmit: handleChangeDmPassword, className: "p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-3" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-semibold text-slate-300" }, "DM-Passwort ändern (gilt nur auf diesem Gerät)"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("input", { type: "text", placeholder: "Neues DM-Passwort", value: newDmPasswordInput, onChange: (e) => setNewDmPasswordInput(e.target.value), className: `${inp} flex-1` }), /* @__PURE__ */ React.createElement("button", { type: "submit", className: btnPrimary }, "Ändern")))), dmTab === "log" && /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex justify-between items-center" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs text-slate-400" }, logs.length, " Einträge (die letzten 100 werden gespeichert)"), /* @__PURE__ */ React.createElement("button", { onClick: () => setLogs([]), className: btnDanger }, "Protokoll leeren")), logs.length === 0 && /* @__PURE__ */ React.createElement("p", { className: "text-sm text-slate-500" }, "Noch keine Buchungen."), logs.map((l) => /* @__PURE__ */ React.createElement("div", { key: l.id, className: "flex justify-between items-center gap-3 p-2.5 rounded-lg bg-slate-950/60 border border-slate-800 text-xs" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-slate-200" }, /* @__PURE__ */ React.createElement("strong", null, l.actor), ": ", l.title), /* @__PURE__ */ React.createElement("div", { className: "text-slate-500" }, l.timestamp, " · ", l.source)), /* @__PURE__ */ React.createElement("span", { className: `font-mono whitespace-nowrap ${String(l.amountText).startsWith("+") ? "text-emerald-400" : "text-red-300"}` }, l.amountText)))));
+  return /* @__PURE__ */ React.createElement("div", { className: "min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-amber-500/30" }, toast && /* @__PURE__ */ React.createElement("div", { className: `fixed bottom-5 right-5 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-2xl border backdrop-blur-md ${toast.type === "error" ? "bg-red-950/90 border-red-600 text-red-100" : "bg-emerald-950/90 border-emerald-500 text-emerald-100"}` }, toast.type === "error" ? /* @__PURE__ */ React.createElement(AlertTriangle, { className: "w-5 h-5 text-red-400" }) : /* @__PURE__ */ React.createElement(CheckCircle2, { className: "w-5 h-5 text-emerald-400" }), /* @__PURE__ */ React.createElement("span", { className: "text-sm font-medium" }, toast.message)), /* @__PURE__ */ React.createElement("header", { className: "sticky top-0 z-30 bg-slate-900/95 border-b border-amber-500/20 backdrop-blur-md" }, /* @__PURE__ */ React.createElement("div", { className: "max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3" }, /* @__PURE__ */ React.createElement("div", { className: "p-2.5 rounded-xl bg-gradient-to-br from-amber-500/20 to-amber-700/20 border border-amber-500/40" }, /* @__PURE__ */ React.createElement(Coins, { className: "w-6 h-6 text-amber-400" })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h1", { className: "text-lg font-bold tracking-tight text-amber-100 flex items-center gap-2" }, "D&D 5.5e Kontor & Schatzkammer", /* @__PURE__ */ React.createElement("span", { className: "text-[11px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30" }, "2024")), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-slate-400 flex items-center gap-2" }, "Wirtschafts- & Kampagnen-Manager", /* @__PURE__ */ React.createElement("span", { className: `px-1.5 py-0.5 rounded-full text-[10px] font-semibold border ${syncStatus === "live" ? "bg-emerald-950/60 text-emerald-300 border-emerald-600/50" : syncStatus === "connecting" ? "bg-amber-950/60 text-amber-300 border-amber-600/50" : syncStatus === "error" ? "bg-red-950/60 text-red-300 border-red-600/50" : "bg-slate-800 text-slate-400 border-slate-600/50"}` }, syncStatus === "live" ? "● Live-Sync" : syncStatus === "connecting" ? "… verbinde" : syncStatus === "error" ? "⚠ Sync-Fehler (lokal)" : "Nur lokal")))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 bg-slate-950 p-1 rounded-xl border border-slate-800" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setStandard("silver"), className: `px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${standard === "silver" ? "bg-slate-700 text-white" : "text-slate-400"}` }, /* @__PURE__ */ React.createElement(Scale, { className: "w-3.5 h-3.5" }), " Silber-Anker"), /* @__PURE__ */ React.createElement("button", { onClick: () => setStandard("gold"), className: `px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${standard === "gold" ? "bg-amber-600/30 text-amber-300 border border-amber-500/40" : "text-slate-400"}` }, /* @__PURE__ */ React.createElement(Coins, { className: "w-3.5 h-3.5" }), " Gold-Standard")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 bg-slate-950 p-1 rounded-xl border border-slate-800" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setRole("player"), className: `px-4 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2 ${role === "player" ? "bg-emerald-600 text-white" : "text-slate-400"}` }, /* @__PURE__ */ React.createElement(Shield, { className: "w-4 h-4" }), " Spieler-Ansicht"), /* @__PURE__ */ React.createElement("button", { onClick: () => setRole("dm"), className: `px-4 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2 ${role === "dm" ? "bg-amber-600 text-slate-950" : "text-slate-400"}` }, isDmUnlocked ? /* @__PURE__ */ React.createElement(Crown, { className: "w-4 h-4" }) : /* @__PURE__ */ React.createElement(Lock, { className: "w-4 h-4" }), " DM-Zentrale", pendingRequests.length > 0 && /* @__PURE__ */ React.createElement("span", { className: "ml-1 px-1.5 py-0.5 rounded-full text-[10px] bg-red-600 text-white" }, pendingRequests.length))))), /* @__PURE__ */ React.createElement("main", { className: "max-w-7xl mx-auto px-4 py-6" }, role === "player" && !loggedInPlayer && /* @__PURE__ */ React.createElement("div", { className: "max-w-md mx-auto my-12 bg-slate-900 border border-emerald-500/30 rounded-2xl p-6 shadow-2xl space-y-5" }, /* @__PURE__ */ React.createElement("div", { className: "text-center space-y-2" }, /* @__PURE__ */ React.createElement("div", { className: "w-12 h-12 rounded-2xl bg-emerald-500/15 border border-emerald-500/40 flex items-center justify-center mx-auto" }, /* @__PURE__ */ React.createElement(UserCheck, { className: "w-6 h-6 text-emerald-400" })), /* @__PURE__ */ React.createElement("h2", { className: "text-lg font-bold text-white" }, "Spieler-Anmeldung"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-slate-400" }, "Melde dich mit deinem Charakternamen und Passwort an.")), /* @__PURE__ */ React.createElement("form", { onSubmit: handlePlayerLogin, className: "space-y-3" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-slate-400 block mb-1" }, "Charaktername"), /* @__PURE__ */ React.createElement("input", { type: "text", placeholder: "z.B. Thrain Eisenfaust", value: loginNameInput, onChange: (e) => setLoginNameInput(e.target.value), className: "w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white focus:outline-none focus:border-emerald-500", autoFocus: true })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-slate-400 block mb-1" }, "Passwort"), /* @__PURE__ */ React.createElement("input", { type: "password", placeholder: "Passwort...", value: loginPasswordInput, onChange: (e) => setLoginPasswordInput(e.target.value), className: "w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white focus:outline-none focus:border-emerald-500" })), /* @__PURE__ */ React.createElement("button", { type: "submit", className: "w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm transition" }, "Anmelden"))), role === "player" && loggedInPlayer && /* @__PURE__ */ React.createElement("div", { className: "space-y-6" }, /* @__PURE__ */ React.createElement("div", { className: "bg-slate-900/80 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap items-center gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-semibold text-slate-400 mr-2" }, "Deine Konten:"), visiblePlayerTabs.map((char) => {
+    const unlocked = char.id === loggedInPlayer.id || char.isParty && isPartyUnlocked;
+    return /* @__PURE__ */ React.createElement("button", { key: char.id, onClick: () => setActiveCharId(char.id), className: `px-3.5 py-2 rounded-xl text-sm font-medium transition flex items-center gap-2 border ${char.id === activeChar.id ? "bg-amber-500/15 border-amber-500 text-amber-200" : "bg-slate-950/70 border-slate-800 text-slate-400"}` }, unlocked ? /* @__PURE__ */ React.createElement(Unlock, { className: "w-3.5 h-3.5 text-emerald-400" }) : /* @__PURE__ */ React.createElement(Lock, { className: "w-3.5 h-3.5 text-amber-400" }), /* @__PURE__ */ React.createElement("span", null, char.name));
+  })), /* @__PURE__ */ React.createElement("button", { onClick: handlePlayerLogout, className: "px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-red-950 border border-slate-700 text-xs font-semibold text-slate-300 flex items-center gap-1.5" }, /* @__PURE__ */ React.createElement(LogOut, { className: "w-3.5 h-3.5" }), " Abmelden")), !isCurrentTabUnlocked ? /* @__PURE__ */ React.createElement("div", { className: "max-w-md mx-auto my-12 bg-slate-900 border border-amber-500/30 rounded-2xl p-6 shadow-2xl text-center space-y-4" }, /* @__PURE__ */ React.createElement(KeyRound, { className: "w-8 h-8 text-amber-400 mx-auto" }), /* @__PURE__ */ React.createElement("h2", { className: "text-lg font-bold text-white" }, "Gruppenkasse gesperrt"), /* @__PURE__ */ React.createElement("form", { onSubmit: handleUnlockParty, className: "space-y-3" }, /* @__PURE__ */ React.createElement("input", { type: "password", placeholder: "Kassen-Passwort...", value: partyPasswordInput, onChange: (e) => setPartyPasswordInput(e.target.value), className: "w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-center text-sm text-white", autoFocus: true }), /* @__PURE__ */ React.createElement("button", { type: "submit", className: "w-full py-2.5 rounded-xl bg-amber-500 text-slate-950 font-bold text-sm" }, "Freischalten"))) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-3 gap-6" }, /* @__PURE__ */ React.createElement("div", { className: "lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex justify-between items-center border-b border-slate-800 pb-3" }, /* @__PURE__ */ React.createElement("h2", { className: "text-lg font-bold text-white flex items-center gap-2" }, /* @__PURE__ */ React.createElement(Coins, { className: "w-5 h-5 text-amber-400" }), " ", activeChar.name), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-slate-400" }, "Gewicht: ", activeWeight.kg, " kg")), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-4 gap-3" }, COIN_META.map((m) => /* @__PURE__ */ React.createElement("div", { key: m.key, className: `p-3.5 rounded-xl border ${m.bg} ${m.border}` }, /* @__PURE__ */ React.createElement("span", { className: "text-xs text-slate-400" }, m.label), /* @__PURE__ */ React.createElement("div", { className: `text-2xl font-extrabold mt-1 ${m.color}` }, activeChar.coins[m.key] || 0)))), /* @__PURE__ */ React.createElement("div", { className: "bg-slate-950 p-3 rounded-xl border border-slate-800 flex justify-between" }, /* @__PURE__ */ React.createElement("span", null, "Bargeld-Gesamtwert: ", /* @__PURE__ */ React.createElement("strong", { className: "text-amber-300" }, formatCurrency(getTotalCopper(activeChar.coins), standard))), /* @__PURE__ */ React.createElement("span", { className: "text-cyan-300" }, "Kreditbriefe: ", activeChar.bankNotesGp || 0, " GM")), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-4" }, /* @__PURE__ */ React.createElement("div", { className: "bg-slate-950/60 p-3.5 rounded-xl border border-slate-800 space-y-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-semibold text-slate-300" }, "Ausgabe verbuchen"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("input", { type: "number", min: "1", placeholder: "Menge", value: manualExpenseAmount, onChange: (e) => setManualExpenseAmount(e.target.value), className: "w-20 px-2 py-1 rounded bg-slate-900 border border-slate-700 text-sm text-white" }), /* @__PURE__ */ React.createElement("select", { value: manualExpenseCoin, onChange: (e) => setManualExpenseCoin(e.target.value), className: "px-2 py-1 rounded bg-slate-900 border border-slate-700 text-sm text-white" }, /* @__PURE__ */ React.createElement("option", { value: "pp" }, "PM"), /* @__PURE__ */ React.createElement("option", { value: "gp" }, "GM"), /* @__PURE__ */ React.createElement("option", { value: "sp" }, "SM"), /* @__PURE__ */ React.createElement("option", { value: "cp" }, "KM")), /* @__PURE__ */ React.createElement("input", { type: "text", placeholder: "Grund", value: manualExpenseReason, onChange: (e) => setManualExpenseReason(e.target.value), className: "flex-1 px-2 py-1 rounded bg-slate-900 border border-slate-700 text-sm text-white" })), /* @__PURE__ */ React.createElement("button", { onClick: handleManualExpense, className: "w-full py-1.5 rounded bg-red-600/20 border border-red-500/40 text-red-300 text-xs font-semibold" }, "Ausgeben")), /* @__PURE__ */ React.createElement("div", { className: "bg-slate-950/60 p-3.5 rounded-xl border border-slate-800 space-y-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-semibold text-slate-300" }, "Überweisen"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("input", { type: "number", min: "1", placeholder: "Menge", value: transferAmount, onChange: (e) => setTransferAmount(e.target.value), className: "w-20 px-2 py-1 rounded bg-slate-900 border border-slate-700 text-sm text-white" }), /* @__PURE__ */ React.createElement("select", { value: transferCoinType, onChange: (e) => setTransferCoinType(e.target.value), className: "px-2 py-1 rounded bg-slate-900 border border-slate-700 text-sm text-white" }, /* @__PURE__ */ React.createElement("option", { value: "pp" }, "PM"), /* @__PURE__ */ React.createElement("option", { value: "gp" }, "GM"), /* @__PURE__ */ React.createElement("option", { value: "sp" }, "SM"), /* @__PURE__ */ React.createElement("option", { value: "cp" }, "KM")), /* @__PURE__ */ React.createElement("select", { value: transferTargetId, onChange: (e) => setTransferTargetId(e.target.value), className: "flex-1 px-2 py-1 rounded bg-slate-900 border border-slate-700 text-sm text-white" }, characters.filter((c) => c.id !== activeChar.id).map((c) => /* @__PURE__ */ React.createElement("option", { key: c.id, value: c.id }, c.name)))), /* @__PURE__ */ React.createElement("button", { onClick: handleTransfer, className: "w-full py-1.5 rounded bg-amber-500/20 border border-amber-500/40 text-amber-200 text-xs font-semibold" }, "Überweisen")))), /* @__PURE__ */ React.createElement("div", { className: "bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4" }, /* @__PURE__ */ React.createElement("h2", { className: "text-lg font-bold text-white flex items-center gap-2" }, /* @__PURE__ */ React.createElement(Compass, { className: "w-5 h-5 text-emerald-400" }), " Lebensstil"), /* @__PURE__ */ React.createElement("div", { className: "p-3.5 rounded-xl bg-emerald-950/20 border border-emerald-500/30" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs text-slate-400 block" }, "Aktueller Status"), /* @__PURE__ */ React.createElement("span", { className: "text-base font-bold text-white" }, currentLifestyleObj.name), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-amber-400 mt-1" }, formatCurrency(currentLifestyleCostCp, standard), " / Woche")), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-slate-300" }, currentLifestyleObj.description))), playerPanel)), role === "dm" && !isDmUnlocked && /* @__PURE__ */ React.createElement("div", { className: "max-w-md mx-auto my-12 bg-slate-900 border border-amber-500/40 rounded-2xl p-6 shadow-2xl text-center space-y-4" }, /* @__PURE__ */ React.createElement(Crown, { className: "w-8 h-8 text-amber-400 mx-auto" }), /* @__PURE__ */ React.createElement("h2", { className: "text-lg font-bold text-amber-200" }, "DM-Zentrale geschützt"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-slate-400" }, "Passwort eingeben (Standard: ", /* @__PURE__ */ React.createElement("strong", null, "dm2024"), ")"), /* @__PURE__ */ React.createElement("form", { onSubmit: handleUnlockDm, className: "space-y-3" }, /* @__PURE__ */ React.createElement("input", { type: "password", placeholder: "Masterpasswort...", value: dmPasswordInput, onChange: (e) => setDmPasswordInput(e.target.value), className: "w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-center text-sm text-white", autoFocus: true }), /* @__PURE__ */ React.createElement("button", { type: "submit", className: "w-full py-2.5 rounded-xl bg-amber-500 text-slate-950 font-bold text-sm" }, "Entsperren"))), role === "dm" && isDmUnlocked && /* @__PURE__ */ React.createElement("div", { className: "space-y-6" }, /* @__PURE__ */ React.createElement("div", { className: "bg-slate-900 border border-amber-500/30 rounded-2xl p-4 flex justify-between items-center" }, /* @__PURE__ */ React.createElement("span", { className: "font-bold text-amber-200" }, "Spielleiter-Zentrale (Aktiv)"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: handleExportJson, className: "px-3 py-1.5 rounded bg-slate-800 text-xs text-white" }, "JSON Export"), /* @__PURE__ */ React.createElement("button", { onClick: handleLockDm, className: "px-3 py-1.5 rounded bg-amber-600 text-xs text-slate-950 font-bold" }, "Sperren"))), pendingRequests.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "bg-emerald-950/25 border border-emerald-500/40 rounded-2xl p-4 space-y-3" }, /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-bold text-emerald-300" }, "Offene Anfragen (", pendingRequests.length, ")"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-3" }, pendingRequests.map((req) => /* @__PURE__ */ React.createElement("div", { key: req.id, className: "p-3 rounded-xl bg-slate-950 border border-slate-800 flex justify-between items-center" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-bold text-white" }, req.charName), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-slate-300" }, req.title, " (+", formatCurrency(req.payoutCp, standard), ")")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1" }, /* @__PURE__ */ React.createElement("button", { onClick: () => handleApproveRequest(req), className: "p-2 rounded bg-emerald-600 text-white" }, /* @__PURE__ */ React.createElement(Check, { className: "w-4 h-4" })), /* @__PURE__ */ React.createElement("button", { onClick: () => handleRejectRequest(req), className: "p-2 rounded bg-red-900 text-white" }, /* @__PURE__ */ React.createElement(X, { className: "w-4 h-4" }))))))), dmPanel)));
+}
+ReactDOM.createRoot(document.getElementById("root")).render(/* @__PURE__ */ React.createElement(App, null));
+
+        window.__appMounted = true;
+    </script>
+</body>
+</html>
