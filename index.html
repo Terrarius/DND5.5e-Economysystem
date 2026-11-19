@@ -56,7 +56,7 @@ const FIREBASE_CONFIG = {
 
 const FIREBASE_ROOT = "dnd55/state";
 const FIREBASE_ENABLED = !!FIREBASE_CONFIG.databaseURL;
-const SYNC_KEYS = ["characters", "shopTabs", "logs", "pendingRequests", "standard", "campaignMeta", "bagOfHolding", "bastion", "factions", "quests", "lexicon", "craftingProjects"];
+const SYNC_KEYS = ["characters", "shopTabs", "logs", "pendingRequests", "standard", "campaignMeta", "bagOfHolding", "bastion", "factions", "quests", "lexicon", "craftingProjects", "bastionModule"];
 
 const normalizeInventoryItem = (it) => ({
   id: it.id || ("inv_" + Math.random().toString(36).slice(2, 8)),
@@ -167,6 +167,7 @@ const CAMPAIGN_TABS = [
   { id: "finances", label: "Finanzen & Shops", Icon: Coins },
   { id: "inventory", label: "Inventar, Traglast & Attunement", Icon: Backpack },
   { id: "bastion", label: "Unsere Bastion", Icon: Castle },
+  { id: "bastionen", label: "Bastionen", Icon: Shield },
   { id: "factions", label: "Ruf & Fraktionen", Icon: Flag },
   { id: "quests", label: "Quest Log", Icon: ScrollText },
   { id: "lore", label: "NPC- & Ortslexikon", Icon: BookOpen },
@@ -672,10 +673,10 @@ const DEFAULT_BASTION_SHOP = [
   { id: "bs_def", kind: "defender", name: "Verteidiger anwerben", cost: 3, desc: "Ein weiterer Verteidiger für die gewählte Einrichtung." },
   { id: "bs_airship", kind: "site", name: "Luftschiff", cost: 40, desc: "Eine fliegende Bastion mit eigenen Einrichtungen.", siteKind: "Luftschiff" }
 ];
-const defBastion = () => ({ sites: [{ id: "site_main", name: "Hauptbastion", kind: "Festung" }], rooms: [], bp: 0, defendersList: [], turn: 1, commands: {}, eventLog: [], shop: DEFAULT_BASTION_SHOP, requests: [], requireApproval: true });
+const defBastion = () => ({ sites: [], rooms: [], bp: 0, defendersList: [], turn: 1, commands: {}, eventLog: [], shop: DEFAULT_BASTION_SHOP, events: BEVENTS.map(([u, t, x], i) => ({ id: "be" + i, upTo: u, title: t, text: x })), requests: [], requireApproval: true });
 Object.assign(SYNC_NORMALIZERS, {
-  bastion: (v) => { const d = defBastion(); v = v || {}; return { ...d, ...v, sites: A(v.sites).length ? A(v.sites) : d.sites, rooms: A(v.rooms), defendersList: A(v.defendersList), eventLog: A(v.eventLog), requests: A(v.requests), shop: v.shop ? A(v.shop) : d.shop, commands: v.commands || {}, bp: parseInt(v.bp, 10) || 0, turn: parseInt(v.turn, 10) || 1, requireApproval: v.requireApproval !== false }; },
-  factions: (v) => A(v).map((f) => ({ category: "Gilde", description: "", renown: 0, hidden: false, privileges: "", notes: "", secretNotes: "", ...f, charRenown: f.charRenown || {}, shopTabIds: A(f.shopTabIds) })),
+  bastion: (v) => { const d = defBastion(); v = v || {}; return { ...d, ...v, sites: A(v.sites).map((s) => ({ ...s, owners: A(s.owners) })), rooms: A(v.rooms), defendersList: A(v.defendersList), eventLog: A(v.eventLog), requests: A(v.requests), shop: v.shopTouched || v.shop ? A(v.shop) : d.shop, events: v.eventsTouched || v.events ? A(v.events) : d.events, commands: v.commands || {}, bp: parseInt(v.bp, 10) || 0, turn: parseInt(v.turn, 10) || 1, requireApproval: v.requireApproval !== false }; },
+  factions: (v) => A(v).filter((f) => !f.__empty).map((f) => ({ category: "Gilde", description: "", renown: 0, hidden: false, privileges: "", notes: "", secretNotes: "", ...f, charRenown: f.charRenown || {}, consequences: A(f.consequences), shopTabIds: A(f.shopTabIds) })),
   quests: (v) => A(v),
   lexicon: (v) => ({ npcs: A(v && v.npcs).map((n) => ({ ...n, questIds: A(n.questIds) })), locations: A(v && v.locations), notes: (v && v.notes) || {} }),
   craftingProjects: (v) => A(v)
@@ -684,6 +685,49 @@ const _cmNorm = SYNC_NORMALIZERS.campaignMeta;
 SYNC_NORMALIZERS.campaignMeta = (v) => {
   const m = _cmNorm(v);
   return { ...m, calendar: { day: 1, month: 0, year: 1492, timeOfDay: "Morgen", weekCounter: 0, totalDays: 0, weekReminder: false, ...(m.calendar || {}) }, recipes: A(m.recipes), sharedNotes: m.sharedNotes || "" };
+};
+
+
+// ===== BASTIONEN & LUFTSCHIFFE: Konstanten =====
+const TIERS = [null,
+  { lvl: "5–8", slots: 4, maxFac: 1, up: { gold: 0, bp: 0, turns: 0 }, baseBp: 2 },
+  { lvl: "9–12", slots: 6, maxFac: 2, up: { gold: 1500, bp: 8, turns: 2 }, baseBp: 4 },
+  { lvl: "13–16", slots: 8, maxFac: 3, up: { gold: 4000, bp: 16, turns: 3 }, baseBp: 6 },
+  { lvl: "17–20", slots: 10, maxFac: 3, up: { gold: 10000, bp: 30, turns: 4 }, baseBp: 8 }];
+const LV = (gold, bp, turns, x) => ({ gold, bp, turns, ...(x || {}) });
+const DEF_FAC_TPL = [
+  { id: "smithy", name: "Schmiede / Werft", levels: [LV(400, 2, 1, { desc: "Gewöhnliche Waffen/Rüstungen/Munition" }), LV(1200, 6, 2, { desc: "Ungewöhnliche magische Items (+1)" }), LV(3500, 12, 3, { desc: "Seltene magische Items (+2, Schiffsmodule)" })] },
+  { id: "alchemy", name: "Alchemielabor / Gewächshaus", levels: [LV(350, 2, 1, { desc: "Standard-Heiltränke" }), LV(1000, 5, 2, { desc: "Mächtige Heiltränke, Resistenzen, Treibstoff-Raffination" }), LV(3000, 10, 3, { desc: "Überragende Tränke, Elixiere" })] },
+  { id: "barracks", name: "Kaserne / Quartiere", levels: [LV(300, 2, 1, { capacity: 10, desc: "Kapazität 10 Mann (2 Squads)" }), LV(900, 5, 2, { capacity: 25, defense: 1, desc: "Kapazität 25 Mann, +1 Verteidigung" }), LV(2500, 10, 2, { capacity: 50, defense: 2, desc: "Kapazität 50 Mann, +2 Verteidigung" })] },
+  { id: "library", name: "Bibliothek / Arkane Kammer", levels: [LV(500, 3, 2, { bpBonus: 1, desc: "+1 BP/Runde, Forschung & Scrolls Grad 1–2" }), LV(1500, 7, 2, { bpBonus: 2, desc: "+2 BP/Runde, Forschung & Scrolls Grad 3–5" }), LV(4000, 14, 3, { bpBonus: 3, desc: "+3 BP/Runde, Rituale & Artefakt-Forschung" })] },
+  { id: "command", name: "Kommandobrücke / Kriegsraum", levels: [LV(450, 3, 1, { extraOrders: 1, desc: "+1 zusätzlicher Befehl pro Runde" }), LV(1400, 6, 2, { extraOrders: 1, expeditions: 1, desc: "Schaltet Missionen/Expeditionen frei" }), LV(3800, 12, 3, { extraOrders: 1, expeditions: 1, discountPct: 20, desc: "−20 % Gold- & BP-Kosten auf Bau & Upgrades" })] }];
+const DEF_UNITS = [
+  { id: "militia", name: "Miliz / Leichtmatrosen", gold: 100, bp: 1, turns: 1, sold: 15, combat: 1 },
+  { id: "guard", name: "Stadtwache / Bordschützen", gold: 300, bp: 2, turns: 1, sold: 40, combat: 2 },
+  { id: "veteran", name: "Veteranen / Sturmtrupp", gold: 750, bp: 4, turns: 2, sold: 90, combat: 4 },
+  { id: "mage", name: "Kampfmagier / Spezialisten", gold: 1800, bp: 8, turns: 3, sold: 200, combat: 7 }];
+const DEF_WEAPONS = [
+  { id: "ballista", name: "Balliste", kind: "Waffe", damage: "3d10", range: "120/480 ft", ammo: "Bolzen", crew: 2, gold: 500, speedMod: 0 },
+  { id: "cannon", name: "Schwere Kanone", kind: "Waffe", damage: "5d10", range: "300/1200 ft", ammo: "Kugeln", crew: 3, gold: 1500, speedMod: 0 },
+  { id: "arcane", name: "Arkaner Strahl", kind: "Waffe", damage: "6d8", range: "200 ft", ammo: "–", crew: 2, gold: 3000, speedMod: 0 },
+  { id: "engine", name: "Verbesserter Maschinenraum", kind: "Modul", damage: "", range: "", ammo: "", crew: 1, gold: 2000, speedMod: 1 }];
+const DEF_CRAFT = [
+  { id: "potion_heal", name: "Heiltrank", facilityId: "alchemy", minLevel: 1, gold: 50, turns: 1, ingredient: "", researchBp: 2, researchTurns: 1 },
+  { id: "sword_p1", name: "+1 Langschwert", facilityId: "smithy", minLevel: 2, gold: 800, turns: 2, ingredient: "", researchBp: 4, researchTurns: 2 },
+  { id: "storm_prop", name: "Sturmpropeller (Schiffsmodul)", facilityId: "smithy", minLevel: 3, gold: 2500, turns: 3, ingredient: "Sturmkristall", researchBp: 8, researchTurns: 3 }];
+const DEF_BEV = BEVENTS.map(([upTo, title, text], i) => ({ id: "bm_ev" + i, upTo, title, text, gold: 0, bp: 0, hull: 0, troops: 0 }));
+const defBM = () => ({ globalState: { gold: 2500, bastionPoints: 10, turnCounter: 1, unlockedBlueprints: ["potion_heal"], storageInventory: [], eventLog: [], squadSize: 5, fuelPrice: 5, repairGold: 50, repairBp: 1 }, templates: { facilities: DEF_FAC_TPL, units: DEF_UNITS, craftables: DEF_CRAFT, shipWeapons: DEF_WEAPONS, events: DEF_BEV }, bastions: [], touched: {} });
+SYNC_NORMALIZERS.bastionModule = (v) => {
+  const d = defBM(); v = v || {}; const t = v.templates || {}; const tc = v.touched || {};
+  const g = { ...d.globalState, ...(v.globalState || {}) };
+  g.unlockedBlueprints = (v.globalState && (tc.bp || v.globalState.unlockedBlueprints)) ? A(g.unlockedBlueprints) : d.globalState.unlockedBlueprints;
+  g.storageInventory = A(g.storageInventory); g.eventLog = A(g.eventLog);
+  const pick = (k) => tc[k] || t[k] ? A(t[k]) : d.templates[k];
+  return {
+    globalState: g, touched: tc,
+    templates: { facilities: pick("facilities").map((f) => ({ ...f, levels: A(f.levels) })), units: pick("units"), craftables: pick("craftables"), shipWeapons: pick("shipWeapons"), events: pick("events") },
+    bastions: A(v.bastions).map((b) => ({ type: "fortress", tier: 1, maxSlots: 4, customBpBonus: 0, defenseBonus: 0, baseBpOverride: "", maxFacLevel: "", ...b, facilities: A(b.facilities), garrison: A(b.garrison), missions: A(b.missions), airshipStats: b.airshipStats ? { ...b.airshipStats, weapons: A(b.airshipStats.weapons) } : null }))
+  };
 };
 
 function App() {
@@ -719,6 +763,7 @@ function App() {
   const [quests, setQuests] = useState([]);
   const [lexicon, setLexicon] = useState(() => SYNC_NORMALIZERS.lexicon(null));
   const [craftingProjects, setCraftingProjects] = useState([]);
+  const [bastionModule, setBastionModule] = useState(() => SYNC_NORMALIZERS.bastionModule(null));
   const [ui, setUi] = useState({});
   const uv = (k, d = "") => ui[k] === undefined ? d : ui[k];
   const su = (k, v) => setUi((p) => ({ ...p, [k]: v }));
@@ -848,6 +893,7 @@ function App() {
         if (parsed.quests) setQuests(SYNC_NORMALIZERS.quests(parsed.quests));
         if (parsed.lexicon) setLexicon(SYNC_NORMALIZERS.lexicon(parsed.lexicon));
         if (parsed.craftingProjects) setCraftingProjects(SYNC_NORMALIZERS.craftingProjects(parsed.craftingProjects));
+        if (parsed.bastionModule) setBastionModule(SYNC_NORMALIZERS.bastionModule(parsed.bastionModule));
       }
       const params = new URLSearchParams(window.location.search);
       const playerParam = params.get("player");
@@ -908,6 +954,7 @@ function App() {
         if (next.quests) setQuests(next.quests);
         if (next.lexicon) setLexicon(next.lexicon);
         if (next.craftingProjects) setCraftingProjects(next.craftingProjects);
+        if (next.bastionModule) setBastionModule(next.bastionModule);
       }
       setSyncStatus("live");
       setLoaded(true);
@@ -929,13 +976,13 @@ function App() {
     try {
       localStorage.setItem(
         "dnd55_economy_state_v3",
-        JSON.stringify({ characters, bagOfHolding, shopTabs, logs, pendingRequests, standard, campaignMeta, dmPassword, bastion, factions, quests, lexicon, craftingProjects })
+        JSON.stringify({ characters, bagOfHolding, shopTabs, logs, pendingRequests, standard, campaignMeta, dmPassword, bastion, factions, quests, lexicon, craftingProjects, bastionModule })
       );
     } catch (e) {
       console.error("Fehler beim Speichern:", e);
     }
     if (syncStatus !== "live" || !dbRef.current) return;
-    const values = { characters, bagOfHolding, shopTabs, logs, pendingRequests, standard, campaignMeta, bastion, factions, quests, lexicon, craftingProjects };
+    const values = { characters, bagOfHolding, shopTabs, logs, pendingRequests, standard, campaignMeta, bastion, factions, quests, lexicon, craftingProjects, bastionModule };
     const updates = {};
     SYNC_KEYS.forEach((k) => {
       const json = JSON.stringify(values[k]);
@@ -950,7 +997,7 @@ function App() {
         setSyncStatus("error");
       });
     }
-  }, [loaded, syncStatus, characters, bagOfHolding, shopTabs, logs, pendingRequests, standard, campaignMeta, dmPassword, bastion, factions, quests, lexicon, craftingProjects]);
+  }, [loaded, syncStatus, characters, bagOfHolding, shopTabs, logs, pendingRequests, standard, campaignMeta, dmPassword, bastion, factions, quests, lexicon, craftingProjects, bastionModule]);
 
   // Automatisches Öffnen des Genehmigungs-Popups in der DM-Zentrale bei neuen Anfragen
   useEffect(() => {
@@ -2024,14 +2071,10 @@ function App() {
   };
   const handleDeleteShopTab = () => {
     if (!currentEditorShopTab) return;
-    if (shopTabs.length <= 1) {
-      notify("Mindestens ein Shop-Reiter muss bleiben.", "error");
-      return;
-    }
     if (!window.confirm(`Reiter „${currentEditorShopTab.name}“ samt Artikeln löschen?`)) return;
     const rest = shopTabs.filter((t) => t.id !== currentEditorShopTab.id);
     setShopTabs(rest);
-    setSelectedShopTabId(rest[0].id);
+    setSelectedShopTabId(rest[0] ? rest[0].id : "");
     resetItemForm();
     notify("Reiter gelöscht.");
   };
@@ -2074,15 +2117,14 @@ function App() {
   const SPECIAL_PLAYER_TABS = [
     { id: "__life", label: "Lebensstil" },
     { id: "__bank", label: "Bank" },
-    { id: "__loot", label: "Beute verkaufen" },
-    { id: "__log", label: "Protokoll" }
+    { id: "__loot", label: "Beute verkaufen" }
   ];
   const isSpecialTab = SPECIAL_PLAYER_TABS.some((t) => t.id === playerFinanceTab);
   const activeShopTab = isSpecialTab ? null : shopTabs.find((t) => t.id === playerFinanceTab) || shopTabs[0] || null;
   const activeTabId = isSpecialTab ? playerFinanceTab : activeShopTab ? activeShopTab.id : null;
   const activeCash = getTotalCopper(activeChar.coins);
   const myRequests = pendingRequests.filter((r) => r.charId === activeChar.id);
-  const myLogs = logs.filter((l) => l.actor === activeChar.name).slice(0, 25);
+  const myLogs = logs.filter((l) => l.actor === activeChar.name).slice(0, 50);
   const bankGp = parseInt(bankAmountGp, 10) || 0;
   const bankFee = bankGp > 0 ? Math.max(1, Math.ceil(bankGp * 0.03)) : 0;
 
@@ -2193,7 +2235,8 @@ function App() {
       ),
       React.createElement("div", { className: "text-sm text-slate-300" }, "Auszahlung bei ", lootMultiplier.label, ": ", React.createElement("strong", { className: "text-amber-300" }, fmt(calculatedLootPayoutCp)))
     ),
-    activeTabId === "__log" && React.createElement("div", { className: "space-y-2" },
+    React.createElement("div", { className: "space-y-2 border-t border-slate-800 pt-4 mt-2" },
+      React.createElement("div", { className: "text-xs font-bold uppercase tracking-wider text-slate-400" }, `Protokoll – ${activeChar.name}`),
       myLogs.length === 0 && React.createElement("p", { className: "text-sm text-slate-500" }, "Noch keine Buchungen."),
       myLogs.map((l) => React.createElement("div", { key: l.id, className: `flex justify-between items-center gap-3 p-2.5 rounded-lg bg-slate-950/60 border border-slate-800 text-xs ${l.reverted ? "opacity-50 line-through" : ""}` },
         React.createElement("div", null,
@@ -3140,7 +3183,8 @@ function App() {
             },
             React.createElement(Undo2, { className: "w-3.5 h-3.5" }),
             React.createElement("span", { className: "hidden sm:inline" }, "Rückgängig")
-          )
+          ),
+          React.createElement("button", { onClick: () => setLogs((p) => p.filter((x) => x.id !== l.id)), title: "Eintrag löschen", className: btnDanger }, "✕")
         )
       ))
     )
@@ -3287,7 +3331,7 @@ function App() {
   const Tag = (t, cls) => h("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full border whitespace-nowrap ${cls || "border-slate-600 bg-slate-800 text-slate-300"}` }, t);
   const Bar = (pct, color) => h("div", { className: "h-2 rounded-full bg-slate-800 overflow-hidden" }, h("div", { className: `h-full ${color || "bg-emerald-500"}`, style: { width: `${clamp(pct, 0, 100)}%` } }));
   const Btn = (label, onClick, cls, extra) => h("button", { onClick, className: cls || btnGhost, ...(extra || {}) }, label);
-  const Fld = (key, value, onCommit, o = {}) => h(o.area ? "textarea" : "input", { key: key + "|" + value, defaultValue: value, placeholder: o.ph || "", rows: o.area ? (o.rows || 2) : undefined, type: o.type || "text", className: o.cls || ta, onBlur: (e) => { if (e.target.value !== String(value)) onCommit(e.target.value); } });
+  const Fld = (key, value, onCommit, o = {}) => h(o.area ? "textarea" : "input", { key: key + "|" + value, defaultValue: value, placeholder: o.ph || "", title: o.ph || undefined, list: o.list, rows: o.area ? (o.rows || 2) : undefined, type: o.type || "text", className: o.cls || ta, onBlur: (e) => { if (e.target.value !== String(value)) onCommit(e.target.value); } });
   const Sel = (value, opts, onChange, cls) => h("select", { value, onChange: (e) => onChange(e.target.value), className: cls || inp }, opts.map(([v, l]) => h("option", { key: v, value: v }, l)));
   const TI = (k, ph, cls) => h("input", { className: cls || `${inp} flex-1 min-w-[8rem]`, placeholder: ph, value: uv(k), onChange: (e) => su(k, e.target.value) });
   const Head = (Icon, title, subtitle, right) => h("div", { className: "flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 pb-4" },
@@ -3302,7 +3346,8 @@ function App() {
   // ---------- BASTION ----------
   const bUp = (fn) => setBastion((b) => fn(SYNC_NORMALIZERS.bastion(b)));
   const updRoom = (id, p) => bUp((b) => ({ ...b, rooms: b.rooms.map((r) => r.id === id ? { ...r, ...p } : r) }));
-  const siteOf = (b, r) => b.sites.some((s) => s.id === r.siteId) ? r.siteId : b.sites[0].id;
+  const siteOf = (b, r) => r.siteId;
+  const isOwner = (b, siteId) => { const s = b.sites.find((x) => x.id === siteId); return !!s && (A(s.owners).length === 0 || A(s.owners).includes(meId)); };
   const pushEvent = (b, text) => ({ ...b, eventLog: [{ id: uid("ev"), text, time: stamp() }, ...b.eventLog].slice(0, 30) });
   const submitCmd = (room) => {
     const cmd = uv("cmd_" + room.id, "craft");
@@ -3330,10 +3375,11 @@ function App() {
     notify(`Bastions-Runde ${b.turn} ausgewertet.`);
   };
   const rollBastionEvent = () => {
-    const roll = 1 + Math.floor(Math.random() * 100); const ev = BEVENTS.find((e) => roll <= e[0]);
-    bUp((b) => pushEvent(b, `W100 ${roll} – ${ev[1]}: ${ev[2]}`));
-    addLog("Bastion", "dm_event", `Bastions-Ereignis: ${ev[1]}`, `W100 ${roll}`, "DM");
-    notify(`W100 ${roll}: ${ev[1]}`);
+    const roll = 1 + Math.floor(Math.random() * 100); const lst = [...bastion.events].sort((a, b) => num(a.upTo) - num(b.upTo)); const ev = lst.find((e) => roll <= num(e.upTo)) || lst[lst.length - 1];
+    if (!ev) { notify("Keine Ereignisse in der Tabelle.", "error"); return; }
+    bUp((b) => pushEvent(b, `W100 ${roll} – ${ev.title}: ${ev.text}`));
+    addLog("Bastion", "dm_event", `Bastions-Ereignis: ${ev.title}`, `W100 ${roll}`, "DM");
+    notify(`W100 ${roll}: ${ev.title}`);
   };
   const requestShop = (it, roomId, siteId) => {
     bUp((b) => ({ ...b, requests: [...b.requests, { id: uid("bq"), charId: meId, charName: cname(meId), itemId: it.id, name: it.name, cost: it.cost, roomId: roomId || "", siteId: siteId || "" }] }));
@@ -3341,43 +3387,44 @@ function App() {
   };
   const approveShop = (q) => {
     const b = SYNC_NORMALIZERS.bastion(bastion); const it = b.shop.find((x) => x.id === q.itemId);
+    if (it && it.kind === "room" && !b.sites.some((s) => s.id === q.siteId)) { notify("Die gewählte Bastion existiert nicht mehr.", "error"); return; }
     if (!it || b.bp < q.cost) { notify("Nicht genug BP oder Artikel entfernt.", "error"); return; }
     const nb = { ...b, bp: b.bp - q.cost, requests: b.requests.filter((x) => x.id !== q.id) };
-    if (it.kind === "room") nb.rooms = [...nb.rooms, { id: uid("room"), name: it.name, type: it.roomType || "Special", level: it.level || 1, defenders: 0, status: "Untätig", productionProgress: 0, ownerId: q.charId, siteId: q.siteId || b.sites[0].id, turnsNeeded: 2 }];
+    if (it.kind === "room") nb.rooms = [...nb.rooms, { id: uid("room"), name: it.name, type: it.roomType || "Special", level: it.level || 1, defenders: 0, status: "Untätig", productionProgress: 0, siteId: q.siteId, turnsNeeded: 2 }];
     else if (it.kind === "upgrade") nb.rooms = nb.rooms.map((r) => r.id === q.roomId ? { ...r, level: Math.min(5, (r.level || 1) + 1) } : r);
     else if (it.kind === "defender") { nb.rooms = nb.rooms.map((r) => r.id === q.roomId ? { ...r, defenders: (r.defenders || 0) + 1 } : r); nb.defendersList = [...nb.defendersList, { id: uid("def"), name: it.name, roomId: q.roomId }]; }
-    else if (it.kind === "site") nb.sites = [...nb.sites, { id: uid("site"), name: it.name, kind: it.siteKind || "Luftschiff" }];
+    else if (it.kind === "site") nb.sites = [...nb.sites, { id: uid("site"), name: it.name, kind: it.siteKind || "Luftschiff", owners: [q.charId] }];
     setBastion(nb); addLog(q.charName, "expense", `Bastion: ${it.name}`, `-${q.cost} BP`, "DM-Genehmigt"); notify(`Genehmigt: ${it.name}`);
   };
   const roomCard = (r) => {
     const c = bastion.commands[r.id]; const defs = bastion.defendersList.filter((d) => d.roomId === r.id);
     return h("div", { key: r.id, className: sub },
       h("div", { className: "flex justify-between gap-2" }, h("span", { className: "font-semibold text-sm text-white" }, r.name), Tag(r.type === "Special" ? "Spezial" : "Basis", r.type === "Special" ? "border-purple-600/50 bg-purple-950/40 text-purple-300" : undefined)),
-      h("div", { className: "text-xs text-slate-400" }, `Stufe ${r.level} · Verteidiger: ${r.defenders || 0} · ${r.status}${r.ownerId ? " · " + cname(r.ownerId) : ""}`),
+      h("div", { className: "text-xs text-slate-400" }, `Stufe ${r.level} · Verteidiger: ${r.defenders || 0} · ${r.status}`),
       Bar(r.productionProgress || 0, "bg-amber-500"),
       defs.length > 0 && h("div", { className: "text-[11px] text-slate-500" }, defs.map((d) => d.name).join(", ")),
       c && h("div", { className: "text-[11px] text-cyan-300" }, `Befehl: ${CMDS[c.cmd]} (${c.status === "approved" ? "freigegeben" : "wartet auf DM"})`));
   };
-  const eventList = (b) => b.eventLog.length > 0 && h("div", { className: sub }, lbl("Ereignisse & Runden-Protokoll"), b.eventLog.map((e) => h("div", { key: e.id, className: `text-xs ${/Angriff/.test(e.text) ? "text-red-300" : "text-slate-300"}` }, `${e.time} · ${e.text}`)));
+  const eventList = (b) => b.eventLog.length > 0 && h("div", { className: sub }, lbl("Ereignisse & Runden-Protokoll"), b.eventLog.map((e) => h("div", { key: e.id, className: `text-xs flex justify-between gap-2 ${/Angriff/.test(e.text) ? "text-red-300" : "text-slate-300"}` }, h("span", null, `${e.time} · ${e.text}`), dm && Btn("✕", () => bUp((x) => ({ ...x, eventLog: x.eventLog.filter((y) => y.id !== e.id) })), btnDanger))));
   const renderBastionPlayer = () => {
     const b = bastion; const [tab, tabs] = SubTabs("bTab", "overview", [["overview", "Übersicht"], ["orders", "Befehle"], ["shop", "Bastions-Shop"]]);
-    const myRooms = b.rooms.filter((r) => !r.ownerId || r.ownerId === meId);
+    const myRooms = b.rooms.filter((r) => isOwner(b, r.siteId));
     const myReq = b.requests.filter((q) => q.charId === meId);
     return h("div", { className: panelBox }, Head(Castle, "Unsere Bastion", `Bastions-Runde ${b.turn} · ${b.defendersList.length} benannte Verteidiger`, h("div", { className: "text-right" }, h("div", { className: "text-xl font-extrabold text-amber-300" }, `${b.bp} BP`), lbl("Bastionspunkte"))), tabs,
       tab === "overview" && h("div", { className: "space-y-4" },
-        b.sites.map((s) => h("div", { key: s.id, className: "space-y-2" }, h("div", { className: "flex items-center gap-2 text-sm font-bold text-amber-200" }, s.name, Tag(s.kind, "border-cyan-700/50 bg-cyan-950/40 text-cyan-300")), h("div", { className: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3" }, b.rooms.filter((r) => siteOf(b, r) === s.id).map(roomCard)))),
-        b.rooms.length === 0 && h("p", { className: "text-sm text-slate-500" }, "Noch keine Einrichtungen – der DM schaltet sie im Bastions-Shop frei."), eventList(b)),
+        b.sites.map((s) => h("div", { key: s.id, className: "space-y-2" }, h("div", { className: "flex flex-wrap items-center gap-2 text-sm font-bold text-amber-200" }, s.name, Tag(s.kind, "border-cyan-700/50 bg-cyan-950/40 text-cyan-300"), h("span", { className: "text-[11px] font-normal text-slate-400" }, `Eigentümer: ${A(s.owners).map(cname).join(", ") || "alle"}`)), h("div", { className: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3" }, b.rooms.filter((r) => siteOf(b, r) === s.id).map(roomCard)))),
+        b.sites.length === 0 && h("p", { className: "text-sm text-slate-500" }, "Noch keine Bastion – der DM legt sie an."), b.sites.length > 0 && b.rooms.length === 0 && h("p", { className: "text-sm text-slate-500" }, "Noch keine Einrichtungen – der DM schaltet sie im Bastions-Shop frei."), eventList(b)),
       tab === "orders" && h("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-3" },
         myRooms.map((r) => h("div", { key: r.id, className: sub }, h("div", { className: "text-sm font-semibold text-white" }, r.name), Sel(uv("cmd_" + r.id, "craft"), Object.entries(CMDS), (v) => su("cmd_" + r.id, v), `${inp} w-full`), TI("note_" + r.id, "Notiz / Ziel (z. B. Heiltränke)", ta), Btn("Befehl für nächsten Zug einreichen", () => submitCmd(r), btnPrimary), b.commands[r.id] && h("div", { className: "text-[11px] text-cyan-300" }, `Aktuell: ${CMDS[b.commands[r.id].cmd]} (${b.commands[r.id].status === "approved" ? "freigegeben" : "wartet auf DM"})`))),
         myRooms.length === 0 && h("p", { className: "text-sm text-slate-500" }, "Keine Einrichtung, für die du Befehle geben kannst.")),
       tab === "shop" && h("div", { className: "space-y-3" },
         myReq.length > 0 && h("div", { className: "text-xs text-amber-300" }, `Offene Anfragen: ${myReq.map((q) => q.name).join(", ")}`),
         h("div", { className: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3" }, b.shop.map((it) => {
-          const needsRoom = it.kind === "upgrade" || it.kind === "defender"; const rid = uv("shopRoom_" + it.id, (b.rooms[0] || {}).id || ""); const sid = uv("shopSite_" + it.id, b.sites[0].id);
+          const needsRoom = it.kind === "upgrade" || it.kind === "defender"; const rid = uv("shopRoom_" + it.id, (b.rooms[0] || {}).id || ""); const sid = uv("shopSite_" + it.id, (b.sites[0] || {}).id || "");
           return h("div", { key: it.id, className: sub }, h("div", { className: "flex justify-between gap-2" }, h("span", { className: "font-semibold text-sm text-white" }, it.name), Tag(KIND_LABEL[it.kind] || it.kind)), h("p", { className: "text-xs text-slate-400" }, it.desc),
             needsRoom && Sel(rid, b.rooms.map((r) => [r.id, r.name]), (v) => su("shopRoom_" + it.id, v), `${inp} w-full`),
             it.kind === "room" && Sel(sid, b.sites.map((s) => [s.id, s.name]), (v) => su("shopSite_" + it.id, v), `${inp} w-full`),
-            h("div", { className: "flex justify-between items-center" }, h("span", { className: "font-bold text-amber-300 text-sm" }, `${it.cost} BP`), Btn("Anfragen", () => requestShop(it, needsRoom ? rid : "", it.kind === "room" ? sid : ""), btnPrimary, { disabled: b.bp < it.cost || (needsRoom && !rid) })));
+            h("div", { className: "flex justify-between items-center" }, h("span", { className: "font-bold text-amber-300 text-sm" }, `${it.cost} BP`), Btn("Anfragen", () => requestShop(it, needsRoom ? rid : "", it.kind === "room" ? sid : ""), btnPrimary, { disabled: b.bp < it.cost || (needsRoom && !rid) || (it.kind === "room" && !sid) })));
         }))));
   };
   const renderBastionDm = () => {
@@ -3392,30 +3439,37 @@ function App() {
           !b.rooms.some((r) => b.commands[r.id]) && h("div", { className: "text-xs text-slate-500" }, "Noch keine Befehle eingereicht.")),
         eventList(b)),
       tab === "rooms" && h("div", { className: "space-y-4" },
-        h("div", { className: sub }, lbl("Neue Bastion (z. B. Luftschiff)"), h("div", { className: "flex flex-wrap gap-2" }, TI("nsName", "Name"), Sel(uv("nsKind", "Luftschiff"), SITE_KINDS.map((k) => [k, k]), (v) => su("nsKind", v)), Btn("Anlegen", () => { if (!uv("nsName").trim()) return; bUp((x) => ({ ...x, sites: [...x.sites, { id: uid("site"), name: uv("nsName").trim(), kind: uv("nsKind", "Luftschiff") }] })); su("nsName", ""); }, btnPrimary))),
-        h("div", { className: sub }, lbl("Neue Einrichtung"), h("div", { className: "flex flex-wrap gap-2" }, TI("nrName", "Name (z. B. Schmiede)"), Sel(uv("nrType", "Special"), [["Special", "Spezial"], ["Basic", "Basis"]], (v) => su("nrType", v)), Sel(uv("nrSite", b.sites[0].id), b.sites.map((s) => [s.id, s.name]), (v) => su("nrSite", v)), Sel(uv("nrOwner", ""), [["", "— Besitzer —"], ...pcs.map((c) => [c.id, c.name])], (v) => su("nrOwner", v)), Btn("Anlegen", () => { if (!uv("nrName").trim()) return; bUp((x) => ({ ...x, rooms: [...x.rooms, { id: uid("room"), name: uv("nrName").trim(), type: uv("nrType", "Special"), level: 1, defenders: 0, status: "Untätig", productionProgress: 0, ownerId: uv("nrOwner", ""), siteId: uv("nrSite", x.sites[0].id), turnsNeeded: 2 }] })); su("nrName", ""); }, btnPrimary))),
+        h("div", { className: sub }, lbl("Neue Bastion (z. B. Luftschiff)"), h("div", { className: "flex flex-wrap gap-2" }, TI("nsName", "Name"), Sel(uv("nsKind", "Luftschiff"), SITE_KINDS.map((k) => [k, k]), (v) => su("nsKind", v)), Btn("Anlegen", () => { if (!uv("nsName").trim()) return; bUp((x) => ({ ...x, sites: [...x.sites, { id: uid("site"), name: uv("nsName").trim(), kind: uv("nsKind", "Luftschiff"), owners: [] }] })); su("nsName", ""); }, btnPrimary)),
+          b.sites.map((s) => h("div", { key: s.id, className: "flex flex-wrap items-center gap-2 border-t border-slate-800 pt-2" }, Fld("sn" + s.id, s.name, (v) => bUp((x) => ({ ...x, sites: x.sites.map((y) => y.id === s.id ? { ...y, name: v } : y) })), { cls: `${inp} w-40` }), Sel(s.kind, SITE_KINDS.map((k) => [k, k]), (v) => bUp((x) => ({ ...x, sites: x.sites.map((y) => y.id === s.id ? { ...y, kind: v } : y) }))), lbl("Eigentümer:"), pcs.map((c) => h("span", { key: c.id }, Chk(c.name, A(s.owners).includes(c.id), (on) => bUp((x) => ({ ...x, sites: x.sites.map((y) => y.id === s.id ? { ...y, owners: on ? [...A(y.owners), c.id] : A(y.owners).filter((i) => i !== c.id) } : y) }))))), Btn("Bastion löschen", () => { if (window.confirm(`„${s.name}“ samt Einrichtungen löschen?`)) bUp((x) => ({ ...x, sites: x.sites.filter((y) => y.id !== s.id), rooms: x.rooms.filter((r) => r.siteId !== s.id) })); }, btnDanger)))),
+        h("div", { className: sub }, lbl("Neue Einrichtung"), h("div", { className: "flex flex-wrap gap-2" }, TI("nrName", "Name (z. B. Schmiede)"), Sel(uv("nrType", "Special"), [["Special", "Spezial"], ["Basic", "Basis"]], (v) => su("nrType", v)), Sel(uv("nrSite", (b.sites[0] || {}).id || ""), b.sites.map((s) => [s.id, s.name]), (v) => su("nrSite", v)), Btn("Anlegen", () => { if (!uv("nrName").trim() || !b.sites.length) { notify("Erst eine Bastion anlegen.", "error"); return; } bUp((x) => ({ ...x, rooms: [...x.rooms, { id: uid("room"), name: uv("nrName").trim(), type: uv("nrType", "Special"), level: 1, defenders: 0, status: "Untätig", productionProgress: 0, siteId: uv("nrSite", x.sites[0].id), turnsNeeded: 2 }] })); su("nrName", ""); }, btnPrimary))),
         b.rooms.map((r) => h("div", { key: r.id, className: sub }, h("div", { className: "flex flex-wrap items-center gap-2" },
           Fld("rn" + r.id, r.name, (v) => updRoom(r.id, { name: v }), { cls: `${inp} w-40` }),
           Btn("Stufe −", () => updRoom(r.id, { level: Math.max(1, (r.level || 1) - 1) })), Tag(`Stufe ${r.level}`), Btn("Stufe +", () => updRoom(r.id, { level: Math.min(5, (r.level || 1) + 1) })),
           Btn("−", () => updRoom(r.id, { defenders: Math.max(0, (r.defenders || 0) - 1) })), Tag(`${r.defenders || 0} Verteidiger`), Btn("+", () => updRoom(r.id, { defenders: (r.defenders || 0) + 1 })),
           Fld("rs" + r.id, r.status, (v) => updRoom(r.id, { status: v }), { cls: `${inp} w-32` }),
           Fld("rp" + r.id, String(r.productionProgress || 0), (v) => updRoom(r.id, { productionProgress: clamp(num(v), 0, 100) }), { cls: `${inp} w-16`, type: "number" }), lbl("% Fortschritt"),
-          Sel(r.ownerId || "", [["", "— kein Besitzer —"], ...pcs.map((c) => [c.id, c.name])], (v) => updRoom(r.id, { ownerId: v })),
           Sel(siteOf(b, r), b.sites.map((s) => [s.id, s.name]), (v) => updRoom(r.id, { siteId: v })),
           Btn("Löschen", () => { if (window.confirm(`Einrichtung „${r.name}“ löschen?`)) bUp((x) => ({ ...x, rooms: x.rooms.filter((q) => q.id !== r.id), defendersList: x.defendersList.filter((d) => d.roomId !== r.id) })); }, btnDanger)))),
         h("div", { className: sub }, lbl("Benannte Verteidiger / Spezialisten"), h("div", { className: "flex flex-wrap gap-2" }, TI("ndName", "Name"), Sel(uv("ndRoom", (b.rooms[0] || {}).id || ""), roomOpts, (v) => su("ndRoom", v)), Btn("Hinzufügen", () => { if (!uv("ndName").trim() || !b.rooms.length) return; bUp((x) => ({ ...x, defendersList: [...x.defendersList, { id: uid("def"), name: uv("ndName").trim(), roomId: uv("ndRoom", x.rooms[0].id) }] })); su("ndName", ""); }, btnPrimary)),
           b.defendersList.map((d) => h("div", { key: d.id, className: "flex justify-between text-xs text-slate-300" }, h("span", null, `${d.name} – ${(b.rooms.find((r) => r.id === d.roomId) || {}).name || "?"}`), Btn("✕", () => bUp((x) => ({ ...x, defendersList: x.defendersList.filter((q) => q.id !== d.id) })), btnDanger))))),
       tab === "shop" && h("div", { className: "space-y-4" },
         h("div", { className: sub }, lbl("Offene Shop-Anfragen"), b.requests.map((q) => h("div", { key: q.id, className: "flex flex-wrap items-center justify-between gap-2 text-xs text-slate-200" }, h("span", null, `${q.charName}: ${q.name} (${q.cost} BP)`), h("span", { className: "flex gap-1.5" }, Btn("Genehmigen", () => approveShop(q), btnPrimary), Btn("Ablehnen", () => bUp((x) => ({ ...x, requests: x.requests.filter((r) => r.id !== q.id) })), btnDanger)))), b.requests.length === 0 && h("div", { className: "text-xs text-slate-500" }, "Keine offenen Anfragen.")),
-        h("div", { className: sub }, lbl("Neuer Shop-Artikel"), h("div", { className: "flex flex-wrap gap-2" }, TI("nsiName", "Name"), Sel(uv("nsiKind", "room"), Object.entries(KIND_LABEL), (v) => su("nsiKind", v)), TI("nsiCost", "BP", `${inp} w-20`), TI("nsiDesc", "Beschreibung", `${inp} flex-1 min-w-[10rem]`), uv("nsiKind", "room") === "site" && Sel(uv("nsiSite", "Luftschiff"), SITE_KINDS.map((k) => [k, k]), (v) => su("nsiSite", v)), Btn("Hinzufügen", () => { if (!uv("nsiName").trim()) return; const kind = uv("nsiKind", "room"); bUp((x) => ({ ...x, shop: [...x.shop, { id: uid("bs"), kind, name: uv("nsiName").trim(), cost: Math.max(0, num(uv("nsiCost"))), desc: uv("nsiDesc"), roomType: "Special", level: 1, siteKind: uv("nsiSite", "Luftschiff") }] })); setUi((p) => ({ ...p, nsiName: "", nsiCost: "", nsiDesc: "" })); }, btnPrimary))),
+        h("div", { className: sub }, lbl("Neuer Shop-Artikel"), h("div", { className: "flex flex-wrap gap-2" }, TI("nsiName", "Name"), Sel(uv("nsiKind", "room"), Object.entries(KIND_LABEL), (v) => su("nsiKind", v)), TI("nsiCost", "BP", `${inp} w-20`), TI("nsiDesc", "Beschreibung", `${inp} flex-1 min-w-[10rem]`), uv("nsiKind", "room") === "site" && Sel(uv("nsiSite", "Luftschiff"), SITE_KINDS.map((k) => [k, k]), (v) => su("nsiSite", v)), Btn("Hinzufügen", () => { if (!uv("nsiName").trim()) return; const kind = uv("nsiKind", "room"); bUp((x) => ({ ...x, shop: [...x.shop, { id: uid("bs"), kind, name: uv("nsiName").trim(), cost: Math.max(0, num(uv("nsiCost"))), desc: uv("nsiDesc"), roomType: "Special", level: 1, siteKind: uv("nsiSite", "Luftschiff") }], shopTouched: true })); setUi((p) => ({ ...p, nsiName: "", nsiCost: "", nsiDesc: "" })); }, btnPrimary))),
+        h("div", { className: sub }, lbl("Ereignistabelle (W100 bis …)"), b.events.map((ev) => h("div", { key: ev.id, className: "flex flex-wrap gap-1.5 items-center" }, Fld("ev" + ev.id + "u", String(ev.upTo), (v) => bUp((x) => ({ ...x, eventsTouched: true, events: x.events.map((y) => y.id === ev.id ? { ...y, upTo: num(v) } : y) })), { cls: `${inp} w-16`, type: "number" }), Fld("ev" + ev.id + "t", ev.title, (v) => bUp((x) => ({ ...x, eventsTouched: true, events: x.events.map((y) => y.id === ev.id ? { ...y, title: v } : y) })), { cls: `${inp} w-40` }), Fld("ev" + ev.id + "x", ev.text, (v) => bUp((x) => ({ ...x, eventsTouched: true, events: x.events.map((y) => y.id === ev.id ? { ...y, text: v } : y) })), { cls: `${inp} flex-1 min-w-[12rem]` }), Btn("✕", () => bUp((x) => ({ ...x, eventsTouched: true, events: x.events.filter((y) => y.id !== ev.id) })), btnDanger))), Btn("+ Ereignis", () => bUp((x) => ({ ...x, eventsTouched: true, events: [...x.events, { id: uid("be"), upTo: 100, title: "Neues Ereignis", text: "" }] })), btnPrimary)),
         h("div", { className: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3" }, b.shop.map((it) => h("div", { key: it.id, className: sub }, h("div", { className: "flex justify-between gap-2" }, h("span", { className: "font-semibold text-sm text-white" }, it.name), Tag(KIND_LABEL[it.kind] || it.kind)), h("p", { className: "text-xs text-slate-400" }, it.desc),
-          h("div", { className: "flex items-center gap-2" }, Fld("sc" + it.id, String(it.cost), (v) => bUp((x) => ({ ...x, shop: x.shop.map((s) => s.id === it.id ? { ...s, cost: Math.max(0, num(v)) } : s) })), { cls: `${inp} w-20`, type: "number" }), lbl("BP"), Btn("Entfernen", () => bUp((x) => ({ ...x, shop: x.shop.filter((s) => s.id !== it.id) })), btnDanger)))))));
+          h("div", { className: "flex items-center gap-2" }, Fld("sc" + it.id, String(it.cost), (v) => bUp((x) => ({ ...x, shop: x.shop.map((s) => s.id === it.id ? { ...s, cost: Math.max(0, num(v)) } : s), shopTouched: true })), { cls: `${inp} w-20`, type: "number" }), lbl("BP"), Btn("Entfernen", () => bUp((x) => ({ ...x, shop: x.shop.filter((s) => s.id !== it.id), shopTouched: true })), btnDanger)))))));
   };
 
   // ---------- RUF & FRAKTIONEN ----------
+  const GRAD = "linear-gradient(to right,#7f1d1d,#dc2626,#f87171,#fb923c,#fde047,#bef264,#4ade80,#16a34a,#14532d)";
+  const GBar = (e) => h("div", { className: "space-y-0.5" }, h("div", { className: "relative h-3 rounded-full overflow-hidden bg-slate-800" }, h("div", { className: "absolute inset-0 opacity-25", style: { background: GRAD } }), h("div", { className: "absolute inset-0", style: { background: GRAD, clipPath: `inset(0 ${100 - (e + 100) / 2}% 0 0)` } }), h("div", { className: "absolute inset-y-0 w-0.5 bg-white", style: { left: `${(e + 100) / 2}%` } })), h("div", { className: "flex justify-between text-[9px] text-slate-500" }, h("span", null, "−100"), h("span", null, "0"), h("span", null, "+100")));
+  const conseqView = (f, e) => { const list = A(f.consequences).filter((c) => e >= num(c.from) && e <= num(c.to)); return h("div", { className: "space-y-1" }, lbl("Folgen deines Rufs"), list.length ? list.map((c) => h("div", { key: c.id, className: "text-xs text-amber-200" }, `• ${c.text}`)) : h("div", { className: "text-[11px] text-slate-500" }, "Aktuell keine besonderen Folgen.")); };
+  const conseqEditor = (f, e) => h("div", { className: "space-y-1.5" }, lbl("Folgen je Ruf-Bereich (von / bis / was passiert)"),
+    [...A(f.consequences)].sort((a, b) => num(a.from) - num(b.from)).map((c) => { const on = e >= num(c.from) && e <= num(c.to); return h("div", { key: c.id, className: `flex flex-wrap gap-1.5 items-center ${on ? "ring-1 ring-amber-500/50 rounded-lg p-1" : ""}` }, Fld("cf" + c.id, String(c.from), (v) => fUp(f.id, (x) => ({ ...x, consequences: A(x.consequences).map((y) => y.id === c.id ? { ...y, from: clamp(num(v), -100, 100) } : y) })), { cls: `${inp} w-16`, type: "number" }), lbl("bis"), Fld("ct" + c.id, String(c.to), (v) => fUp(f.id, (x) => ({ ...x, consequences: A(x.consequences).map((y) => y.id === c.id ? { ...y, to: clamp(num(v), -100, 100) } : y) })), { cls: `${inp} w-16`, type: "number" }), Fld("cx" + c.id, c.text, (v) => fUp(f.id, (x) => ({ ...x, consequences: A(x.consequences).map((y) => y.id === c.id ? { ...y, text: v } : y) })), { cls: `${inp} flex-1 min-w-[10rem]` }), Btn("✕", () => fUp(f.id, (x) => ({ ...x, consequences: A(x.consequences).filter((y) => y.id !== c.id) })), btnDanger)); }),
+    h("div", { className: "flex flex-wrap gap-1.5" }, TI("cvF_" + f.id, "von", `${inp} w-16`), TI("cvT_" + f.id, "bis", `${inp} w-16`), TI("cvX_" + f.id, "Was passiert?"), Btn("Folge hinzufügen", () => { if (!uv("cvX_" + f.id).trim()) return; fUp(f.id, (x) => ({ ...x, consequences: [...A(x.consequences), { id: uid("cq"), from: clamp(num(uv("cvF_" + f.id)), -100, 100), to: clamp(uv("cvT_" + f.id) === "" ? 100 : num(uv("cvT_" + f.id)), -100, 100), text: uv("cvX_" + f.id).trim() }] })); setUi((p) => ({ ...p, ["cvF_" + f.id]: "", ["cvT_" + f.id]: "", ["cvX_" + f.id]: "" })); }, btnPrimary)));
   const fUp = (id, fn) => setFactions((p) => A(p).map((f) => f.id === id ? fn(f) : f));
   const renderFactions = () => {
-    const list = dm ? factions : factions.filter((f) => !f.hidden);
+    const list = (dm ? factions : factions.filter((f) => !f.hidden)).filter((f) => !f.__empty);
     const tabName = (id) => (shopTabs.find((t) => t.id === id) || {}).name || id;
     return h("div", { className: panelBox }, Head(Flag, "Ruf & Fraktionen", dm ? "DM: Fraktionen, Renown & Händler-Verknüpfung" : `Dein Ansehen${me ? " – " + me.name : ""}`),
       dm && h("div", { className: sub }, lbl("Neue Fraktion"), h("div", { className: "flex flex-wrap gap-2" }, TI("nfName", "Name"), Sel(uv("nfCat", "Gilde"), FACTION_CATS.map((k) => [k, k]), (v) => su("nfCat", v)), Btn("Anlegen", () => { if (!uv("nfName").trim()) return; setFactions((p) => [...A(p), { id: uid("fac"), name: uv("nfName").trim(), category: uv("nfCat", "Gilde"), description: "", renown: 0, hidden: false, privileges: "", notes: "", secretNotes: "", charRenown: {}, shopTabIds: [] }]); su("nfName", ""); }, btnPrimary))),
@@ -3426,11 +3480,13 @@ function App() {
         return h("div", { key: f.id, className: sub },
           h("div", { className: "flex justify-between items-start gap-2" }, dm ? Fld("fn" + f.id, f.name, (v) => fUp(f.id, (x) => ({ ...x, name: v })), { cls: `${inp} w-44 font-bold` }) : h("span", { className: "font-bold text-white" }, f.name), h("span", { className: "flex gap-1" }, f.hidden && Tag("geheim", "border-red-700/50 bg-red-950/40 text-red-300"), dm ? Sel(f.category, FACTION_CATS.map((k) => [k, k]), (v) => fUp(f.id, (x) => ({ ...x, category: v }))) : Tag(f.category))),
           h("div", { className: "flex justify-between text-xs" }, h("span", { className: `${rc} font-bold` }, rk), h("span", { className: "text-slate-400" }, `${e > 0 ? "+" : ""}${e}${dm ? " (Gruppe)" : ""}`)),
-          h("div", { className: "h-2.5 rounded-full bg-slate-800 overflow-hidden relative" }, h("div", { className: `h-full ${e <= -50 ? "bg-red-500" : e < 0 ? "bg-orange-400" : e < 50 ? "bg-emerald-500" : "bg-amber-400"}`, style: { width: `${(e + 100) / 2}%` } }), [25, 50, 75].map((p) => h("div", { key: p, className: "absolute inset-y-0 w-px bg-slate-500/70", style: { left: `${p}%` } }))),
+          GBar(e),
           !dm && h("p", { className: "text-xs text-slate-300" }, f.description),
           !dm && f.privileges && (e >= 50 ? h("div", { className: "text-xs text-emerald-300" }, `Privilegien: ${f.privileges}`) : h("div", { className: "text-[11px] text-slate-500" }, "Privilegien ab Ruf +50")),
           !dm && links.length > 0 && h("div", { className: `text-xs ${e <= -50 ? "text-red-300" : e >= 50 ? "text-emerald-300" : "text-slate-500"}` }, e <= -50 ? `Händler (${links.map(tabName).join(", ")}) verweigern den Handel – Wachen werden alarmiert!` : e >= 50 ? `${e >= 80 ? 15 : 10} % Rabatt bei: ${links.map(tabName).join(", ")}` : `Händler: ${links.map(tabName).join(", ")} (Rabatt ab +50)`),
+          !dm && conseqView(f, e),
           dm && h("div", { className: "space-y-2" },
+            conseqEditor(f, e),
             Fld("fd" + f.id, f.description, (v) => fUp(f.id, (x) => ({ ...x, description: v })), { ph: "Beschreibung (öffentlich)", area: true }),
             h("div", { className: "flex flex-wrap items-center gap-1.5" }, lbl("Gruppe:"), [-10, -5, -1, 1, 5, 10].map((n) => h("span", { key: n }, Btn(n > 0 ? `+${n}` : `${n}`, () => fUp(f.id, (x) => ({ ...x, renown: clamp((parseInt(x.renown, 10) || 0) + n, -100, 100) })))))),
             h("div", { className: "flex flex-wrap items-center gap-1.5" }, Sel(uv("fc_" + f.id, (pcs[0] || {}).id || ""), pcs.map((c) => [c.id, c.name]), (v) => su("fc_" + f.id, v)), [-10, -5, 5, 10].map((n) => h("span", { key: n }, Btn(n > 0 ? `+${n}` : `${n}`, () => { const cid = uv("fc_" + f.id, (pcs[0] || {}).id || ""); if (cid) fUp(f.id, (x) => ({ ...x, charRenown: { ...(x.charRenown || {}), [cid]: clamp(((x.charRenown || {})[cid] || 0) + n, -100, 100) } })); })))),
@@ -3439,11 +3495,13 @@ function App() {
             Fld("fo" + f.id, f.notes, (v) => fUp(f.id, (x) => ({ ...x, notes: v })), { ph: "Diplomatische Notizen (nur DM)", area: true }),
             h("div", { className: "border border-amber-700/40 rounded-lg p-2 bg-amber-950/10" }, lbl("Geheimnotizen (nur DM)"), Fld("fs" + f.id, f.secretNotes, (v) => fUp(f.id, (x) => ({ ...x, secretNotes: v })), { area: true })),
             h("div", { className: "flex flex-wrap gap-3" }, lbl("Händler-Reiter:"), shopTabs.map((t) => h("span", { key: t.id }, Chk(t.name, links.includes(t.id), (on) => fUp(f.id, (x) => ({ ...x, shopTabIds: on ? [...A(x.shopTabIds), t.id] : A(x.shopTabIds).filter((i) => i !== t.id) })))))),
-            h("div", { className: "flex gap-2" }, Btn(f.hidden ? "Für Spieler zeigen" : "Vor Spielern verbergen", () => fUp(f.id, (x) => ({ ...x, hidden: !x.hidden }))), Btn("Löschen", () => { if (window.confirm(`Fraktion „${f.name}“ löschen?`)) setFactions((p) => A(p).filter((x) => x.id !== f.id)); }, btnDanger))));
+            h("div", { className: "flex gap-2" }, Btn(f.hidden ? "Für Spieler zeigen" : "Vor Spielern verbergen", () => fUp(f.id, (x) => ({ ...x, hidden: !x.hidden }))), Btn("Löschen", () => { if (window.confirm(`Fraktion „${f.name}“ löschen?`)) setFactions((p) => { const r = A(p).filter((x) => x.id !== f.id); return r.length ? r : [{ id: "__e", __empty: true }]; }); }, btnDanger))));
       })));
   };
 
   // ---------- QUESTS, GERÜCHTE & KALENDER ----------
+  const qSort = (l) => [...l].sort((a, b) => { const ord = { Aktiv: 0, Erledigt: 1, Gescheitert: 2 }; if (ord[a.status] !== ord[b.status]) return ord[a.status] - ord[b.status]; const k = a.status === "Aktiv" ? "acceptedAt" : a.status === "Erledigt" ? "doneAt" : "failedAt"; return num(b[k]) - num(a[k]); });
+  const qStatus = (q, v) => qUp(q.id, { status: v, ...(v === "Erledigt" ? { doneAt: Date.now() } : v === "Gescheitert" ? { failedAt: Date.now() } : { acceptedAt: Date.now() }) });
   const qUp = (id, p) => setQuests((q) => A(q).map((x) => x.id === id ? { ...x, ...p } : x));
   const advanceDays = (n, grant) => {
     let { day, month, year } = cal; day += n;
@@ -3465,7 +3523,7 @@ function App() {
     (q.giver || q.location) && h("div", { className: "text-[11px] text-slate-400" }, [q.giver && `Auftraggeber: ${q.giver}`, q.location && `Ort: ${q.location}`].filter(Boolean).join(" · ")),
     q.publicNotes && h("p", { className: "text-xs text-slate-300" }, q.publicNotes), q.rewardPreview && h("div", { className: "text-xs text-amber-300" }, `Belohnung: ${q.rewardPreview}`));
   const renderQuests = () => {
-    const vis = dm ? A(quests) : A(quests).filter((q) => q.visible);
+    const vis = qSort(dm ? A(quests) : A(quests).filter((q) => q.visible));
     const col = (title, cat) => h("div", { className: "space-y-2" }, h("div", { className: "text-xs font-bold uppercase tracking-wider text-slate-400" }, title), vis.filter((q) => q.category === cat).map(questCard), !vis.some((q) => q.category === cat) && h("div", { className: "text-xs text-slate-600" }, "—"));
     return h("div", { className: panelBox }, Head(ScrollText, "Quest Log", `Ingame-Datum: ${cm.currentDate} · ${cal.timeOfDay}`),
       dm ? h("div", { className: "space-y-4" },
@@ -3473,13 +3531,13 @@ function App() {
           h("div", { className: "flex flex-wrap items-center gap-2" }, h("span", { className: "text-sm font-bold text-amber-200" }, `${cal.day}. ${MONTHS[cal.month]}, ${cal.year} TZ`), Tag(`${cal.weekCounter || 0}/7 bis Wochenwechsel`), Tag(`Tag ${cal.totalDays || 0} der Kampagne`)),
           h("div", { className: "flex flex-wrap items-center gap-2" }, Btn("+1 Tag", () => advanceDays(1, false), btnPrimary), Btn("+1 Woche (Downtime)", () => advanceDays(7, uv("grantDt", true)), btnPrimary), Chk("7 Downtime-Tage an alle Spieler vergeben", uv("grantDt", true), (v) => su("grantDt", v)), Sel(cal.timeOfDay, ["Morgen", "Mittag", "Abend", "Nacht"].map((k) => [k, k]), (v) => setCM({ calendar: { ...cal, timeOfDay: v } }))),
           h("div", { className: "flex flex-wrap items-center gap-2" }, lbl("Datum setzen:"), Fld("cd" + cal.day, String(cal.day), (v) => setCM({ currentDate: `${clamp(num(v), 1, 30)}. ${MONTHS[cal.month]}, ${cal.year} TZ`, calendar: { ...cal, day: clamp(num(v), 1, 30) } }), { cls: `${inp} w-16`, type: "number" }), Sel(String(cal.month), MONTHS.map((m, i) => [String(i), m]), (v) => setCM({ currentDate: `${cal.day}. ${MONTHS[num(v)]}, ${cal.year} TZ`, calendar: { ...cal, month: num(v) } })), Fld("cy" + cal.year, String(cal.year), (v) => setCM({ currentDate: `${cal.day}. ${MONTHS[cal.month]}, ${num(v)} TZ`, calendar: { ...cal, year: num(v) } }), { cls: `${inp} w-20`, type: "number" }))),
-        h("div", { className: sub }, lbl("Neue Quest / neues Gerücht"), h("div", { className: "flex flex-wrap gap-2" }, TI("nqTitle", "Titel"), Sel(uv("nqCat", "Hauptquest"), Q_CATS.map((k) => [k, k]), (v) => su("nqCat", v)), TI("nqGiver", "Auftraggeber"), TI("nqLoc", "Ort"), TI("nqRew", "Belohnungsvorschau"), Btn("Anlegen", () => { if (!uv("nqTitle").trim()) return; setQuests((q) => [...A(q), { id: uid("q"), title: uv("nqTitle").trim(), category: uv("nqCat", "Hauptquest"), status: "Aktiv", giver: uv("nqGiver"), location: uv("nqLoc"), rewardPreview: uv("nqRew"), publicNotes: "", dmSecrets: "", visible: false }]); setUi((p) => ({ ...p, nqTitle: "", nqGiver: "", nqLoc: "", nqRew: "" })); }, btnPrimary))),
+        h("div", { className: sub }, lbl("Neue Quest / neues Gerücht"), h("div", { className: "flex flex-wrap gap-2" }, TI("nqTitle", "Titel"), Sel(uv("nqCat", "Hauptquest"), Q_CATS.map((k) => [k, k]), (v) => su("nqCat", v)), TI("nqGiver", "Auftraggeber"), TI("nqLoc", "Ort"), TI("nqRew", "Belohnungsvorschau"), Btn("Anlegen", () => { if (!uv("nqTitle").trim()) return; setQuests((q) => [...A(q), { id: uid("q"), title: uv("nqTitle").trim(), category: uv("nqCat", "Hauptquest"), status: "Aktiv", giver: uv("nqGiver"), location: uv("nqLoc"), rewardPreview: uv("nqRew"), publicNotes: "", dmSecrets: "", visible: false, acceptedAt: Date.now(), doneAt: 0, failedAt: 0 }]); setUi((p) => ({ ...p, nqTitle: "", nqGiver: "", nqLoc: "", nqRew: "" })); }, btnPrimary))),
         h("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-3" }, vis.map((q) => h("div", { key: q.id, className: sub },
-          h("div", { className: "flex flex-wrap items-center gap-2" }, Fld("qt" + q.id, q.title, (v) => qUp(q.id, { title: v }), { cls: `${inp} flex-1` }), Sel(q.category, Q_CATS.map((k) => [k, k]), (v) => qUp(q.id, { category: v })), Sel(q.status, Q_STATES.map((k) => [k, k]), (v) => qUp(q.id, { status: v }))),
+          h("div", { className: "flex flex-wrap items-center gap-2" }, Fld("qt" + q.id, q.title, (v) => qUp(q.id, { title: v }), { cls: `${inp} flex-1` }), Sel(q.category, Q_CATS.map((k) => [k, k]), (v) => qUp(q.id, { category: v })), Sel(q.status, Q_STATES.map((k) => [k, k]), (v) => qStatus(q, v))),
           h("div", { className: "flex flex-wrap gap-2" }, Fld("qg" + q.id, q.giver || "", (v) => qUp(q.id, { giver: v }), { cls: `${inp} w-36`, ph: "Auftraggeber" }), Fld("ql" + q.id, q.location || "", (v) => qUp(q.id, { location: v }), { cls: `${inp} w-36`, ph: "Ort" }), Fld("qr" + q.id, q.rewardPreview || "", (v) => qUp(q.id, { rewardPreview: v }), { cls: `${inp} flex-1`, ph: "Belohnung" })),
           Fld("qn" + q.id, q.publicNotes || "", (v) => qUp(q.id, { publicNotes: v }), { ph: "Öffentliche Notizen", area: true }),
           h("div", { className: "border border-amber-700/40 rounded-lg p-2 bg-amber-950/10" }, lbl("DM-Geheimnisse"), Fld("qs" + q.id, q.dmSecrets || "", (v) => qUp(q.id, { dmSecrets: v }), { area: true })),
-          h("div", { className: "flex gap-2" }, Btn(q.visible ? "Vor Spielern verbergen" : "Für Spieler freigeben", () => qUp(q.id, { visible: !q.visible }), q.visible ? btnGhost : btnPrimary), Btn("Löschen", () => setQuests((x) => A(x).filter((y) => y.id !== q.id)), btnDanger)))))) : null,
+          h("div", { className: "flex gap-2" }, Btn(q.visible ? "Vor Spielern verbergen" : "Für Spieler freigeben", () => qUp(q.id, q.visible ? { visible: false } : { visible: true, acceptedAt: Date.now() }), q.visible ? btnGhost : btnPrimary), Btn("Löschen", () => setQuests((x) => A(x).filter((y) => y.id !== q.id)), btnDanger)))))) : null,
       !dm && h("div", { className: "grid grid-cols-1 lg:grid-cols-3 gap-4" }, col("Hauptquests", "Hauptquest"), col("Nebenquests", "Fraktionsauftrag"), col("Tavernen-Gerüchte", "Gerücht")),
       h("div", { className: sub }, lbl("Gemeinsames Notizfeld der Gruppe (speichert beim Verlassen des Feldes)"), Fld("shared", cm.sharedNotes, (v) => setCM({ sharedNotes: v }), { area: true, rows: 6, ph: "Eigene Ermittlungen, Spuren, Theorien …" })));
   };
@@ -3492,30 +3550,33 @@ function App() {
     const lx = SYNC_NORMALIZERS.lexicon(lexicon); const q = uv("lxSearch").toLowerCase();
     const match = (x) => !q || JSON.stringify([x.name, x.role, x.region, x.location, x.publicDesc]).toLowerCase().includes(q);
     const npcs = lx.npcs.filter((n) => (dm || n.visible) && match(n)); const locs = lx.locations.filter((n) => (dm || n.visible) && match(n));
-    const fName = (id) => { const f = factions.find((x) => x.id === id); return f && (dm || !f.hidden) ? f.name : ""; };
+    const fOpts = [["", "— Fraktion —"], ...A(factions).filter((f) => !f.__empty && (dm || !f.hidden)).map((f) => [f.id, f.name])];
+    const fName = (id) => { const f = A(factions).find((x) => x.id === id); return f && (dm || !f.hidden) ? f.name : ""; };
+    const locByName = (nm) => nm ? lx.locations.find((l) => (dm || l.visible) && l.name.trim().toLowerCase() === String(nm).trim().toLowerCase()) : null;
     const noteKey = (id) => `${id}__${meId}`;
     const myNote = (x) => !dm && h("div", null, lbl("Deine Notiz (gepinnt)"), Fld("pn" + x.id, lx.notes[noteKey(x.id)] || "", (v) => setLexicon((l) => { const n = SYNC_NORMALIZERS.lexicon(l); return { ...n, notes: { ...n.notes, [noteKey(x.id)]: v } }; }), { ph: "z. B. Schuldet uns noch einen Gefallen" }));
     const dmBox = (kind, x) => dm && h("div", { className: "space-y-2" },
       h("div", { className: "border border-amber-700/40 rounded-lg p-2 bg-amber-950/10" }, lbl("DM-Geheimnis (nur in der DM-Zentrale sichtbar)"), Fld("ds" + x.id, x.dmSecret || "", (v) => lxUp(kind, x.id, { dmSecret: v }), { area: true })),
-      h("div", { className: "flex flex-wrap gap-2" }, Btn(x.visible ? "👁 Für Spieler sichtbar" : "Für Spieler verborgen", () => lxUp(kind, x.id, { visible: !x.visible }), x.visible ? btnPrimary : btnGhost), Btn("Löschen", () => lxDel(kind, x.id), btnDanger)));
-    const npcCard = (n) => h("div", { key: n.id, className: sub },
-      h("div", { className: "flex justify-between gap-2" }, dm ? Fld("nn" + n.id, n.name, (v) => lxUp("npcs", n.id, { name: v }), { cls: `${inp} font-bold` }) : h("span", { className: "font-bold text-white" }, n.name), n.status && Tag(n.status)),
-      dm ? h("div", { className: "flex flex-wrap gap-2" }, Fld("nr" + n.id, n.role || "", (v) => lxUp("npcs", n.id, { role: v }), { cls: `${inp} w-32`, ph: "Beruf/Rolle" }), Fld("nst" + n.id, n.status || "", (v) => lxUp("npcs", n.id, { status: v }), { cls: `${inp} w-24`, ph: "Status" }), Sel(n.factionId || "", [["", "— Fraktion —"], ...factions.map((f) => [f.id, f.name])], (v) => lxUp("npcs", n.id, { factionId: v })), Sel(n.location || "", [["", "— Ort —"], ...lx.locations.map((l) => [l.name, l.name])], (v) => lxUp("npcs", n.id, { location: v })))
-        : h("div", { className: "text-xs text-slate-400" }, [n.role, n.location && `wohnt/zu finden: ${n.location}`, fName(n.factionId) && `Fraktion: ${fName(n.factionId)}`].filter(Boolean).join(" · ")),
-      dm ? Fld("np" + n.id, n.publicDesc || "", (v) => lxUp("npcs", n.id, { publicDesc: v }), { ph: "Öffentliche Beschreibung", area: true }) : h("p", { className: "text-xs text-slate-300" }, n.publicDesc),
-      dm && h("div", { className: "flex flex-wrap gap-2 items-center" }, lbl("Quests:"), A(quests).map((qq) => h("span", { key: qq.id }, Chk(qq.title, A(n.questIds).includes(qq.id), (on) => lxUp("npcs", n.id, { questIds: on ? [...A(n.questIds), qq.id] : A(n.questIds).filter((i) => i !== qq.id) }))))),
-      !dm && A(n.questIds).length > 0 && h("div", { className: "text-[11px] text-cyan-300" }, "Quests: " + A(n.questIds).map((i) => (A(quests).find((x) => x.id === i && x.visible) || {}).title).filter(Boolean).join(", ")),
-      myNote(n), dmBox("npcs", n));
-    const locCard = (l) => h("div", { key: l.id, className: sub },
-      dm ? h("div", { className: "flex flex-wrap gap-2" }, Fld("ln" + l.id, l.name, (v) => lxUp("locations", l.id, { name: v }), { cls: `${inp} font-bold` }), Fld("lr" + l.id, l.region || "", (v) => lxUp("locations", l.id, { region: v }), { cls: `${inp} w-32`, ph: "Region" })) : h("div", { className: "flex justify-between" }, h("span", { className: "font-bold text-white" }, l.name), l.region && Tag(l.region)),
-      dm ? Fld("lp" + l.id, l.publicDesc || "", (v) => lxUp("locations", l.id, { publicDesc: v }), { ph: "Öffentliche Beschreibung", area: true }) : h("p", { className: "text-xs text-slate-300" }, l.publicDesc),
-      lx.npcs.filter((n) => n.location === l.name && (dm || n.visible)).length > 0 && h("div", { className: "text-[11px] text-slate-400" }, "Bekannte NPCs: " + lx.npcs.filter((n) => n.location === l.name && (dm || n.visible)).map((n) => n.name).join(", ")),
-      myNote(l), dmBox("locations", l));
-    return h("div", { className: panelBox }, Head(BookOpen, "NPC- & Ortslexikon", dm ? "DM: anlegen, freigeben, Geheimnisse pflegen" : "Bekannte Persönlichkeiten und besuchte Orte"),
+      h("div", { className: "flex flex-wrap gap-2" }, Btn(x.visible ? "👁 Für Spieler sichtbar" : "Für Spieler verborgen", () => lxUp(kind, x.id, { visible: !x.visible }), x.visible ? btnPrimary : btnGhost), Btn("Löschen", () => { if (window.confirm(`„${x.name}“ löschen?`)) lxDel(kind, x.id); }, btnDanger)));
+    const npcCard = (n) => { const loc = locByName(n.location); return h("div", { key: n.id, className: sub },
+      h("div", { className: "flex gap-2" }, Fld("nn" + n.id, n.name, (v) => lxUp("npcs", n.id, { name: v }), { cls: `${inp} font-bold flex-1` }), Fld("nst" + n.id, n.status || "", (v) => lxUp("npcs", n.id, { status: v }), { cls: `${inp} w-24`, ph: "Status" })),
+      h("div", { className: "flex flex-wrap gap-2" }, Fld("nr" + n.id, n.role || "", (v) => lxUp("npcs", n.id, { role: v }), { cls: `${inp} w-32`, ph: "Beruf/Rolle" }), Fld("nl" + n.id, n.location || "", (v) => lxUp("npcs", n.id, { location: v }), { cls: `${inp} w-36`, ph: "Ort", list: "lxLocs" }), Sel(n.factionId || "", fOpts, (v) => lxUp("npcs", n.id, { factionId: v }))),
+      loc ? h("button", { onClick: () => su("lxSearch", loc.name), className: "text-[11px] text-cyan-300 text-left" }, `📍 verknüpft mit Ort „${loc.name}“${loc.region ? ` (${loc.region})` : ""}`) : n.location ? h("div", { className: "text-[11px] text-slate-500" }, "Ort noch nicht im Lexikon angelegt") : null,
+      fName(n.factionId) && h("div", { className: "text-[11px] text-slate-400" }, `Fraktion: ${fName(n.factionId)}`),
+      Fld("np" + n.id, n.publicDesc || "", (v) => lxUp("npcs", n.id, { publicDesc: v }), { ph: "Beschreibung", area: true }),
+      h("div", { className: "flex flex-wrap gap-2 items-center" }, lbl("Quests:"), A(quests).filter((qq) => dm || qq.visible).map((qq) => h("span", { key: qq.id }, Chk(qq.title, A(n.questIds).includes(qq.id), (on) => lxUp("npcs", n.id, { questIds: on ? [...A(n.questIds), qq.id] : A(n.questIds).filter((i) => i !== qq.id) }))))),
+      myNote(n), dmBox("npcs", n)); };
+    const locCard = (l) => { const here = lx.npcs.filter((n) => (dm || n.visible) && n.location && n.location.trim().toLowerCase() === l.name.trim().toLowerCase()); return h("div", { key: l.id, className: sub },
+      h("div", { className: "flex flex-wrap gap-2" }, Fld("ln" + l.id, l.name, (v) => lxUp("locations", l.id, { name: v }), { cls: `${inp} font-bold` }), Fld("lr" + l.id, l.region || "", (v) => lxUp("locations", l.id, { region: v }), { cls: `${inp} w-32`, ph: "Region" })),
+      Fld("lp" + l.id, l.publicDesc || "", (v) => lxUp("locations", l.id, { publicDesc: v }), { ph: "Beschreibung", area: true }),
+      here.length > 0 && h("div", { className: "text-[11px] text-slate-400 flex flex-wrap gap-1.5" }, "Verknüpfte NPCs:", here.map((n) => h("button", { key: n.id, onClick: () => su("lxSearch", n.name), className: "text-cyan-300 underline" }, n.name))),
+      myNote(l), dmBox("locations", l)); };
+    return h("div", { className: panelBox }, Head(BookOpen, "NPC- & Ortslexikon", dm ? "DM: bearbeiten, freigeben, löschen, Geheimnisse pflegen" : "Gemeinsam gepflegt – jeder darf Einträge anlegen und bearbeiten"),
       h("input", { className: ta, placeholder: "Durchsuchen (Name, Beruf, Region, Ort …)", value: uv("lxSearch"), onChange: (e) => su("lxSearch", e.target.value) }),
-      dm && h("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-3" },
-        h("div", { className: sub }, lbl("Neuer NPC"), h("div", { className: "flex flex-wrap gap-2" }, TI("nnName", "Name"), TI("nnRole", "Beruf/Rolle"), Btn("Anlegen", () => { if (!uv("nnName").trim()) return; lxAdd("npcs", { id: uid("npc"), name: uv("nnName").trim(), role: uv("nnRole"), factionId: "", location: "", status: "lebt", publicDesc: "", dmSecret: "", visible: false, questIds: [] }); setUi((p) => ({ ...p, nnName: "", nnRole: "" })); }, btnPrimary))),
-        h("div", { className: sub }, lbl("Neuer Ort"), h("div", { className: "flex flex-wrap gap-2" }, TI("nlName", "Name"), TI("nlReg", "Region"), Btn("Anlegen", () => { if (!uv("nlName").trim()) return; lxAdd("locations", { id: uid("loc"), name: uv("nlName").trim(), region: uv("nlReg"), publicDesc: "", dmSecret: "", visible: false }); setUi((p) => ({ ...p, nlName: "", nlReg: "" })); }, btnPrimary)))),
+      h("datalist", { id: "lxLocs" }, lx.locations.filter((l) => dm || l.visible).map((l) => h("option", { key: l.id, value: l.name }))),
+      h("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-3" },
+        h("div", { className: sub }, lbl("Neuer NPC"), h("div", { className: "flex flex-wrap gap-2" }, TI("nnName", "Name"), TI("nnRole", "Beruf/Rolle"), Btn("Anlegen", () => { if (!uv("nnName").trim()) return; lxAdd("npcs", { id: uid("npc"), name: uv("nnName").trim(), role: uv("nnRole"), factionId: "", location: "", status: "lebt", publicDesc: "", dmSecret: "", visible: !dm, questIds: [] }); setUi((p) => ({ ...p, nnName: "", nnRole: "" })); }, btnPrimary))),
+        h("div", { className: sub }, lbl("Neuer Ort"), h("div", { className: "flex flex-wrap gap-2" }, TI("nlName", "Name"), TI("nlReg", "Region"), Btn("Anlegen", () => { if (!uv("nlName").trim()) return; lxAdd("locations", { id: uid("loc"), name: uv("nlName").trim(), region: uv("nlReg"), publicDesc: "", dmSecret: "", visible: !dm }); setUi((p) => ({ ...p, nlName: "", nlReg: "" })); }, btnPrimary)))),
       h("div", { className: "text-xs font-bold uppercase tracking-wider text-slate-400" }, `NPCs (${npcs.length})`), h("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-3" }, npcs.map(npcCard)),
       h("div", { className: "text-xs font-bold uppercase tracking-wider text-slate-400" }, `Orte (${locs.length})`), h("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-3" }, locs.map(locCard)));
   };
@@ -3566,7 +3627,208 @@ function App() {
       (dm ? all : mine).length === 0 && h("p", { className: "text-sm text-slate-500" }, "Keine Projekte vorhanden."));
   };
 
-  const renderModule = (k) => k === "bastion" ? (dm ? renderBastionDm() : renderBastionPlayer()) : k === "factions" ? renderFactions() : k === "quests" ? renderQuests() : k === "lore" ? renderLore() : k === "downtime" ? renderDowntime() : renderPlaceholderModule(k);
+  // ---------- BASTIONEN & LUFTSCHIFFE ----------
+  const bmUp = (fn) => setBastionModule((m) => fn(SYNC_NORMALIZERS.bastionModule(m)));
+  const bm = SYNC_NORMALIZERS.bastionModule(bastionModule); const G = bm.globalState, TP = bm.templates;
+  const bmG = (p) => bmUp((m) => ({ ...m, globalState: { ...m.globalState, ...p } }));
+  const bmB = (id, p) => bmUp((m) => ({ ...m, bastions: m.bastions.map((b) => b.id === id ? (typeof p === "function" ? p(b) : { ...b, ...p }) : b) }));
+  const bmT = (k, list) => bmUp((m) => ({ ...m, templates: { ...m.templates, [k]: list }, touched: { ...m.touched, [k]: true } }));
+  const tplF = (id) => TP.facilities.find((f) => f.id === id), tplU = (id) => TP.units.find((u) => u.id === id), tplC = (id) => TP.craftables.find((c) => c.id === id);
+  const lvlOf = (f) => (tplF(f.templateId) || { levels: [] }).levels[f.level - 1] || {};
+  const dcost = (n, d) => Math.max(0, Math.round(num(n) * (100 - d) / 100));
+  const err = (m) => notify(m, "error");
+  const canPay = (g, p) => { if (G.gold < g) { err(`Zu wenig Gold (${g} GM nötig).`); return false; } if (G.bastionPoints < p) { err(`Zu wenig BP (${p} nötig).`); return false; } return true; };
+  const pay = (m, g, p) => ({ ...m, globalState: { ...m.globalState, gold: m.globalState.gold - g, bastionPoints: m.globalState.bastionPoints - p } });
+  const bS = (b) => {
+    const tier = TIERS[clamp(num(b.tier) || 1, 1, 4)]; const act = b.facilities.filter((f) => f.status === "active" && f.level > 0);
+    const sum = (k) => act.reduce((s, f) => s + num(lvlOf(f)[k]), 0);
+    const baseBp = b.baseBpOverride !== "" && b.baseBpOverride != null ? num(b.baseBpOverride) : tier.baseBp;
+    const squadsAway = (uid2) => b.missions.filter((x) => x.unitTemplateId === uid2).reduce((s, x) => s + num(x.squads), 0);
+    return { tier, baseBp, bp: baseBp + num(b.customBpBonus) + sum("bpBonus"), capacity: sum("capacity"), defense: num(b.defenseBonus) + sum("defense"), extra: sum("extraOrders"), exped: act.some((f) => num(lvlOf(f).expeditions)), disc: clamp(Math.max(0, ...act.map((f) => num(lvlOf(f).discountPct))), 0, 100), maxLvl: b.maxFacLevel !== "" && b.maxFacLevel != null ? num(b.maxFacLevel) : tier.maxFac, used: b.garrison.reduce((s, g) => s + num(g.headcount), 0), sold: b.garrison.reduce((s, g) => s + num(g.squadCount) * num((tplU(g.unitTemplateId) || {}).sold), 0), combat: b.garrison.reduce((s, g) => s + num(g.squadCount) * num((tplU(g.unitTemplateId) || {}).combat), 0), bonusUsed: b.facilities.filter((f) => f.extraOrder).length, squadsAway };
+  };
+  const shipInfo = (b) => {
+    const a = b.airshipStats; if (!a) return { speed: 0, warn: [] }; const warn = []; const crew = bS(b).used;
+    let s = num(a.baseSpeed) + a.weapons.reduce((x, w) => x + num((TP.shipWeapons.find((t) => t.id === w.templateId) || {}).speedMod), 0);
+    if (num(a.hullHp) < num(a.maxHullHp) / 2) { s -= 1; warn.push("Hülle unter 50 %: −1 Geschwindigkeit, Waffen können ausfallen"); }
+    if (crew < num(a.crewMinimum)) { s -= 1; warn.push(`Crew unter Minimum (${crew}/${a.crewMinimum}): reduzierte Geschwindigkeit/Feuerkraft`); }
+    if (num(a.fuel) <= 0) { s = 0; warn.push("Kein Treibstoff!"); }
+    return { speed: Math.max(0, s), warn };
+  };
+  const setFac = (b, fid, p) => bmB(b.id, (x) => ({ ...x, facilities: x.facilities.map((y) => y.id === fid ? { ...y, ...p } : y) }));
+  const buildFac = (b, tid) => {
+    const t = tplF(tid), st = bS(b); if (!t || !t.levels.length) return err("Vorlage wählen.");
+    if (b.facilities.length >= num(b.maxSlots)) return err("Keine freien Slots."); if (st.maxLvl < 1) return err("Bastionsstufe zu niedrig.");
+    const l = t.levels[0], g = dcost(l.gold, st.disc), p = dcost(l.bp, st.disc); if (!canPay(g, p)) return;
+    bmUp((m) => pay({ ...m, bastions: m.bastions.map((x) => x.id === b.id ? { ...x, facilities: [...x.facilities, { id: uid("fac"), templateId: tid, name: t.name, level: 0, targetLevel: 1, status: "building", upgradeTurnsRemaining: num(l.turns) || 1, currentOrder: null, extraOrder: null }] } : x) }, g, p));
+    notify(`${t.name}: Bau in Warteschlange (${num(l.turns) || 1} Rd.).`);
+  };
+  const upFac = (b, f) => {
+    const t = tplF(f.templateId), st = bS(b), nl = f.level + 1; if (!t || nl > t.levels.length || nl > st.maxLvl) return err("Max. Stufe für diese Bastion erreicht.");
+    const l = t.levels[nl - 1], g = dcost(l.gold, st.disc), p = dcost(l.bp, st.disc); if (!canPay(g, p)) return;
+    bmUp((m) => pay({ ...m, bastions: m.bastions.map((x) => x.id === b.id ? { ...x, facilities: x.facilities.map((y) => y.id === f.id ? { ...y, targetLevel: nl, status: "building", upgradeTurnsRemaining: num(l.turns) || 1 } : y) } : x) }, g, p));
+    notify(`Ausbau auf Stufe ${nl} in Warteschlange.`);
+  };
+  const assignOrder = (b, f, slot) => {
+    const key = `${f.id}_${slot}`, type = uv("ot_" + key, "craft"), tid = uv("ob_" + key, ""), st = bS(b), lv = lvlOf(f);
+    if (f[slot]) return err("Slot belegt."); if (slot === "extraOrder" && (!f.currentOrder || st.bonusUsed >= st.extra)) return err("Kein Zusatzbefehl verfügbar (Kommandobrücke).");
+    let order = null, g = 0, p = 0, ing = "";
+    if (type === "craft") {
+      const c = tplC(tid); if (!c) return err("Gegenstand wählen."); if (!G.unlockedBlueprints.includes(c.id)) return err("Blaupause nicht freigeschaltet.");
+      if (c.facilityId && c.facilityId !== f.templateId) return err("Falsche Einrichtung."); if (f.level < num(c.minLevel)) return err(`Einrichtung braucht Stufe ${c.minLevel}.`);
+      if (c.ingredient && !G.storageInventory.some((i) => i.name === c.ingredient && num(i.qty) > 0)) return err(`Spezialzutat fehlt: ${c.ingredient}`);
+      g = num(c.gold); ing = c.ingredient || ""; order = { type, targetId: c.id, label: `${c.name} herstellen`, turnsRemaining: num(c.turns) || 1 };
+    } else if (type === "recruit") {
+      const u = tplU(tid); if (!u) return err("Truppentyp wählen."); if (!num(lv.capacity)) return err("Rekrutieren nur in Kasernen/Quartieren.");
+      const pend = b.facilities.reduce((s, x) => s + [x.currentOrder, x.extraOrder].filter((o) => o && o.type === "recruit").length, 0) * num(G.squadSize);
+      if (st.used + pend + num(G.squadSize) > st.capacity) return err("Kasernen-Kapazität reicht nicht.");
+      g = num(u.gold); p = num(u.bp); order = { type, targetId: u.id, label: `${u.name} rekrutieren`, turnsRemaining: num(u.turns) || 1 };
+    } else if (type === "research") {
+      const c = tplC(tid); if (!c || G.unlockedBlueprints.includes(c.id)) return err("Unerforschte Blaupause wählen."); if (!num(lv.bpBonus)) return err("Forschen nur in Bibliotheken.");
+      p = num(c.researchBp); order = { type, targetId: c.id, label: `${c.name} erforschen`, turnsRemaining: num(c.researchTurns) || 1 };
+    } else order = { type: "trade", targetId: "", label: "Handeln / Sammeln", turnsRemaining: 1 };
+    if (!canPay(g, p)) return;
+    bmUp((m) => {
+      const mm = pay({ ...m }, g, p); let used = false;
+      if (ing) mm.globalState = { ...mm.globalState, storageInventory: mm.globalState.storageInventory.map((i) => !used && i.name === ing && num(i.qty) > 0 ? (used = true, { ...i, qty: num(i.qty) - 1 }) : i).filter((i) => num(i.qty) > 0) };
+      return { ...mm, bastions: mm.bastions.map((x) => x.id === b.id ? { ...x, facilities: x.facilities.map((y) => y.id === f.id ? { ...y, [slot]: order } : y) } : x) };
+    });
+    notify(`Befehl erteilt: ${order.label}`);
+  };
+  const startTier = (b) => {
+    const to = num(b.tier) + 1; if (to > 4 || b.tierUp) return err("Kein Aufstieg möglich."); const u = TIERS[to].up; if (!canPay(u.gold, u.bp)) return;
+    bmUp((m) => pay({ ...m, bastions: m.bastions.map((x) => x.id === b.id ? { ...x, tierUp: { to, turnsRemaining: u.turns } } : x) }, u.gold, u.bp)); notify(`Aufstieg auf Stufe ${to} gestartet.`);
+  };
+  const sendMission = (b) => {
+    const unitId = uv("ms_u_" + b.id, (TP.units[0] || {}).id), n = clamp(num(uv("ms_n_" + b.id, "1")), 1, 99), turns = clamp(num(uv("ms_t_" + b.id, "2")), 1, 20), st = bS(b);
+    const g = b.garrison.find((x) => x.unitTemplateId === unitId); const avail = (g ? num(g.squadCount) : 0) - st.squadsAway(unitId);
+    if (!st.exped) return err("Kommandobrücke/Kriegsraum Stufe 2+ nötig."); if (n > avail) return err(`Nur ${avail} Squad(s) verfügbar.`);
+    bmB(b.id, (x) => ({ ...x, missions: [...x.missions, { id: uid("ms"), label: uv("ms_l_" + b.id) || "Expedition", unitTemplateId: unitId, squads: n, turnsRemaining: turns }] })); notify("Mission gestartet.");
+  };
+  const buyFuel = (b) => { const a = b.airshipStats, q = clamp(num(uv("fuelQ_" + b.id, "10")), 1, Math.max(1, num(a.maxFuel) - num(a.fuel))), cost = q * num(G.fuelPrice); if (num(a.fuel) >= num(a.maxFuel)) return err("Tank ist voll."); if (!canPay(cost, 0)) return; bmUp((m) => pay({ ...m, bastions: m.bastions.map((x) => x.id === b.id ? { ...x, airshipStats: { ...x.airshipStats, fuel: Math.min(num(x.airshipStats.maxFuel), num(x.airshipStats.fuel) + q) } } : x) }, cost, 0)); notify(`${q} Treibstoff nachgekauft.`); };
+  const repairShip = (b) => { const a = b.airshipStats, hp = clamp(Math.round(num(uv("repQ_" + b.id, "10")) / 10) * 10, 10, Math.max(10, num(a.maxHullHp) - num(a.hullHp))), k = hp / 10, g = k * num(G.repairGold), p = k * num(G.repairBp); if (num(a.hullHp) >= num(a.maxHullHp)) return err("Hülle ist intakt."); if (!canPay(g, p)) return; bmUp((m) => pay({ ...m, bastions: m.bastions.map((x) => x.id === b.id ? { ...x, airshipStats: { ...x.airshipStats, hullHp: Math.min(num(x.airshipStats.maxHullHp), num(x.airshipStats.hullHp) + hp) } } : x) }, g, p)); notify(`Reparatur: +${hp} Hülle.`); };
+  const loseSquads = (b, n) => { let gar = b.garrison.map((g) => ({ ...g })); for (let i = 0; i < n; i++) { if (!gar.length) break; const gi = gar.reduce((bi, g, j) => num(g.squadCount) > num(gar[bi].squadCount) ? j : bi, 0); gar[gi].squadCount -= 1; gar[gi].headcount = Math.max(0, num(gar[gi].headcount) - num(G.squadSize)); gar = gar.filter((g) => num(g.squadCount) > 0); } return gar; };
+  const rollEvt = (secret, bid, tplId) => {
+    const roll = 1 + Math.floor(Math.random() * 100); const list = [...TP.events].sort((a, b) => num(a.upTo) - num(b.upTo)); const ev = tplId ? TP.events.find((e) => e.id === tplId) : (list.find((e) => roll <= num(e.upTo)) || list[list.length - 1]);
+    if (!ev) return err("Keine Ereignisse definiert."); const auto = uv("evAuto", true);
+    bmUp((m) => {
+      const g = { ...m.globalState }; let bs = m.bastions; const fx = [];
+      if (auto) {
+        if (num(ev.gold)) { g.gold = Math.max(0, g.gold + num(ev.gold)); fx.push(`${num(ev.gold) > 0 ? "+" : ""}${ev.gold} GM`); } if (num(ev.bp)) { g.bastionPoints = Math.max(0, g.bastionPoints + num(ev.bp)); fx.push(`${num(ev.bp) > 0 ? "+" : ""}${ev.bp} BP`); }
+        if (bid) bs = bs.map((b) => { if (b.id !== bid) return b; const nb = { ...b }; if (num(ev.hull) && nb.airshipStats) { const a = nb.airshipStats; nb.airshipStats = { ...a, hullHp: clamp(num(a.hullHp) + num(ev.hull), 0, num(a.maxHullHp)) }; fx.push(`${num(ev.hull) > 0 ? "+" : ""}${ev.hull} Hülle`); } if (num(ev.troops) < 0) { nb.garrison = loseSquads(nb, -num(ev.troops)); fx.push(`${ev.troops} Squads`); } return nb; });
+      }
+      g.eventLog = [{ id: uid("ev"), text: `${tplId ? "Manuell" : "W100 " + roll} – ${ev.title}: ${ev.text}${fx.length ? ` [${fx.join(", ")}]` : ""}`, time: stamp(), secret: !!secret }, ...g.eventLog].slice(0, 60);
+      return { ...m, globalState: g, bastions: bs };
+    });
+    if (!secret) addLog("Bastionen", "dm_event", `Bastions-Ereignis: ${ev.title}`, tplId ? "manuell" : `W100 ${roll}`, "DM");
+    notify(`${tplId ? "Ereignis" : "W100 " + roll}: ${ev.title}${secret ? " (geheim)" : ""}`);
+  };
+  const evalRound = () => {
+    const m = SYNC_NORMALIZERS.bastionModule(bastionModule); const g0 = m.globalState; let gold = g0.gold, bp = g0.bastionPoints; const unlocked = [...g0.unlockedBlueprints]; let inv = [...g0.storageInventory]; const out = []; const ss = num(g0.squadSize) || 5;
+    const bastions = m.bastions.map((b0) => {
+      const b = { ...b0 }; const st = bS(b); const nm = b.name; bp += st.bp; out.push(`${nm}: +${st.bp} BP`);
+      if (st.sold > 0) { if (gold >= st.sold) { gold -= st.sold; b.unpaid = 0; out.push(`${nm}: Sold ${st.sold} GM`); } else { b.unpaid = num(b.unpaid) + 1; out.push(`⚠ ${nm}: Sold (${st.sold} GM) nicht bezahlbar – Moral sinkt (${b.unpaid}. Runde)`); if (b.unpaid >= 2) { b.garrison = loseSquads(b, 1); out.push(`⚠ ${nm}: ein Squad desertiert`); } } }
+      b.facilities = b.facilities.map((f0) => {
+        const f = { ...f0 };
+        if (f.status === "building") { f.upgradeTurnsRemaining = num(f.upgradeTurnsRemaining) - 1; if (f.upgradeTurnsRemaining <= 0) { f.level = f.targetLevel; f.status = "active"; f.upgradeTurnsRemaining = 0; out.push(`${nm}: ${f.name} Stufe ${f.level} fertig`); } return f; }
+        if (f.status !== "active") return f;
+        ["currentOrder", "extraOrder"].forEach((s) => {
+          if (!f[s]) return; const o = { ...f[s], turnsRemaining: num(f[s].turnsRemaining) - 1 }; if (o.turnsRemaining > 0) { f[s] = o; return; } f[s] = null;
+          if (o.type === "craft") { const c = tplC(o.targetId); const nmI = c ? c.name : o.label; const ex = inv.find((i) => i.name === nmI); inv = ex ? inv.map((i) => i === ex ? { ...i, qty: num(i.qty) + 1 } : i) : [...inv, { id: uid("inv"), name: nmI, qty: 1 }]; out.push(`${nm}: ${nmI} hergestellt`); }
+          else if (o.type === "recruit") { const u = tplU(o.targetId); const ex = b.garrison.find((x) => x.unitTemplateId === o.targetId); b.garrison = ex ? b.garrison.map((x) => x === ex ? { ...x, squadCount: num(x.squadCount) + 1, headcount: num(x.headcount) + ss } : x) : [...b.garrison, { unitTemplateId: o.targetId, name: u ? u.name : "Truppe", squadCount: 1, headcount: ss }]; out.push(`${nm}: Squad ${u ? u.name : ""} rekrutiert`); }
+          else if (o.type === "research") { if (!unlocked.includes(o.targetId)) unlocked.push(o.targetId); out.push(`${nm}: Blaupause „${(tplC(o.targetId) || {}).name || o.targetId}“ erforscht`); }
+          else { const tg = lvlOf(f).tradeGold != null ? num(lvlOf(f).tradeGold) : f.level * 50; gold += tg; out.push(`${nm}: Handel +${tg} GM`); }
+        });
+        return f;
+      });
+      b.missions = b.missions.map((x) => ({ ...x, turnsRemaining: num(x.turnsRemaining) - 1 })).filter((x) => { if (x.turnsRemaining > 0) return true; out.push(`${nm}: Mission „${x.label}“ zurück – DM vergibt Belohnung`); return false; });
+      if (b.tierUp) { const t = { ...b.tierUp, turnsRemaining: num(b.tierUp.turnsRemaining) - 1 }; if (t.turnsRemaining <= 0) { if (num(b.maxSlots) === TIERS[b.tier].slots) b.maxSlots = TIERS[t.to].slots; b.tier = t.to; b.tierUp = null; out.push(`${nm}: Aufstieg auf Stufe ${t.to}!`); } else b.tierUp = t; }
+      return b;
+    });
+    const turn = g0.turnCounter;
+    setBastionModule({ ...m, touched: { ...m.touched, bp: true }, globalState: { ...g0, gold, bastionPoints: bp, turnCounter: turn + 1, unlockedBlueprints: unlocked, storageInventory: inv, eventLog: [{ id: uid("ev"), text: `Runde ${turn}: ${out.join("; ") || "nichts passiert"}`, time: stamp(), secret: false }, ...g0.eventLog].slice(0, 60) }, bastions });
+    addLog("Bastionen", "dm_event", `Bastions-Runde ${turn} ausgewertet`, `${out.length} Meldungen`, "DM"); notify(`Bastions-Runde ${turn} ausgewertet.`);
+    if (uv("rndEvent", false)) rollEvt(false, uv("bmSel", ""));
+  };
+  const Warn = (t, k) => h("div", { key: k, className: "text-xs text-amber-300 bg-amber-950/30 border border-amber-700/40 rounded-lg px-2.5 py-1.5" }, "⚠ " + t);
+  const FB = (b, key, label, w) => h("label", { className: "text-[11px] text-slate-500 flex flex-col" }, label, Fld("bf" + b.id + key, String(b[key] == null ? "" : b[key]), (v) => bmB(b.id, { [key]: v === "" ? "" : num(v) }), { cls: `${inp} ${w || "w-20"}`, type: "number" }));
+  const FA = (b, key, label) => h("label", { className: "text-[11px] text-slate-500 flex flex-col" }, label, Fld("af" + b.id + key, String(b.airshipStats[key] == null ? "" : b.airshipStats[key]), (v) => bmB(b.id, (x) => ({ ...x, airshipStats: { ...x.airshipStats, [key]: num(v) } })), { cls: `${inp} w-20`, type: "number" }));
+  const facCard = (b, f, st) => {
+    const t = tplF(f.templateId) || { levels: [] }; const nl = f.level + 1; const nxt = t.levels[nl - 1]; const lv = lvlOf(f);
+    const slotUi = (slot, label) => {
+      const o = f[slot]; const key = `${f.id}_${slot}`;
+      if (o) return h("div", { className: "text-[11px] text-cyan-300 flex justify-between gap-2" }, h("span", null, `${label}: ${o.label} (${o.turnsRemaining} Rd.)`), dm && Btn("✕", () => setFac(b, f.id, { [slot]: null }), btnDanger));
+      if (f.status !== "active" || (slot === "extraOrder" && (!f.currentOrder || st.bonusUsed >= st.extra))) return null;
+      const ty = uv("ot_" + key, "craft");
+      const opts = ty === "craft" ? TP.craftables.filter((c) => G.unlockedBlueprints.includes(c.id) && (!c.facilityId || c.facilityId === f.templateId)).map((c) => [c.id, `${c.name} (${c.gold} GM, ${c.turns} Rd.)`]) : ty === "recruit" ? TP.units.map((u) => [u.id, `${u.name} (${u.gold} GM, ${u.bp} BP)`]) : ty === "research" ? TP.craftables.filter((c) => !G.unlockedBlueprints.includes(c.id)).map((c) => [c.id, `${c.name} (${c.researchBp} BP)`]) : [];
+      return h("div", { className: "flex flex-wrap gap-1.5" }, Sel(ty, [["craft", "Herstellen"], ["recruit", "Rekrutieren"], ["research", "Forschen"], ["trade", "Handeln/Sammeln"]], (v) => setUi((p) => ({ ...p, ["ot_" + key]: v, ["ob_" + key]: "" })), `${inp} text-xs`), ty !== "trade" && Sel(uv("ob_" + key, ""), [["", "— wählen —"], ...opts], (v) => su("ob_" + key, v), `${inp} text-xs max-w-[11rem]`), Btn(slot === "extraOrder" ? "Zusatzbefehl" : "Befehl erteilen", () => assignOrder(b, f, slot), btnPrimary));
+    };
+    return h("div", { key: f.id, className: sub },
+      h("div", { className: "flex justify-between gap-2" }, h("span", { className: "font-semibold text-sm text-white" }, f.name), h("span", { className: "flex gap-1" }, Tag(`Stufe ${f.level}`, "border-purple-600/50 bg-purple-950/40 text-purple-300"), Tag(f.status === "building" ? `Bau ${f.upgradeTurnsRemaining} Rd.` : f.status === "active" ? "aktiv" : f.status === "damaged" ? "beschädigt" : "gesperrt", f.status === "active" ? "border-emerald-600/50 bg-emerald-950/40 text-emerald-300" : f.status === "building" ? "border-amber-600/50 bg-amber-950/40 text-amber-300" : "border-red-700/50 bg-red-950/40 text-red-300"))),
+      lv.desc && h("div", { className: "text-[11px] text-slate-400" }, lv.desc), slotUi("currentOrder", "Befehl"), slotUi("extraOrder", "Zusatz"),
+      f.status === "active" && nxt && nl <= st.maxLvl && Btn(`Ausbau → Stufe ${nl} (${dcost(nxt.gold, st.disc)} GM, ${dcost(nxt.bp, st.disc)} BP, ${nxt.turns} Rd.)`, () => upFac(b, f), btnGhost),
+      dm && h("div", { className: "flex flex-wrap gap-1.5 border-t border-slate-800 pt-1.5" }, Btn("Sofort fertig", () => setFac(b, f.id, { level: f.targetLevel || f.level, status: "active", upgradeTurnsRemaining: 0 })), Sel(f.status, [["active", "aktiv"], ["building", "im Bau"], ["damaged", "beschädigt"], ["locked", "gesperrt"]], (v) => setFac(b, f.id, { status: v }), `${inp} text-xs`), Btn("St. −", () => setFac(b, f.id, { level: Math.max(0, f.level - 1), targetLevel: Math.max(1, f.level - 1) })), Btn("St. +", () => setFac(b, f.id, { level: f.level + 1, targetLevel: f.level + 1 })), Btn("Löschen", () => { if (window.confirm(`„${f.name}“ löschen?`)) bmB(b.id, (x) => ({ ...x, facilities: x.facilities.filter((y) => y.id !== f.id) })); }, btnDanger)));
+  };
+  const bastionView = (b) => {
+    const st = bS(b); const a = b.airshipStats; const si = shipInfo(b); const tu = b.tierUp; const nt = TIERS[num(b.tier) + 1];
+    return h("div", { className: "space-y-4" },
+      h("div", { className: "flex flex-wrap gap-1.5" }, Tag(`Stufe ${b.tier} (Lvl ${st.tier.lvl})`, "border-amber-600/50 bg-amber-950/40 text-amber-300"), Tag(`Slots ${b.facilities.length}/${b.maxSlots}`), Tag(`+${st.bp} BP/Rd.`), Tag(`Verteidigung +${st.defense}`), Tag(`Kapazität ${st.used}/${st.capacity}`), Tag(`Sold ${st.sold} GM/Rd.`), Tag(`Kampfwert ${st.combat}`), st.disc > 0 && Tag(`−${st.disc} % Baukosten`, "border-emerald-600/50 bg-emerald-950/40 text-emerald-300")),
+      num(b.unpaid) > 0 && Warn(`Sold unbezahlt seit ${b.unpaid} Runde(n) – Moral sinkt, ab 2 Runden desertieren Squads.`, "u"),
+      st.used > st.capacity && Warn("Mehr Truppen als Kasernen-Kapazität.", "c"),
+      tu ? h("div", { className: "text-xs text-cyan-300" }, `Aufstieg auf Stufe ${tu.to}: noch ${tu.turnsRemaining} Runde(n)`) : nt && Btn(`Aufstieg auf Stufe ${num(b.tier) + 1} (${nt.up.gold} GM, ${nt.up.bp} BP, ${nt.up.turns} Rd.)`, () => startTier(b), btnGhost),
+      a && h("div", { className: sub }, h("div", { className: "text-sm font-bold text-cyan-200" }, "Luftschiff-Status"),
+        h("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-2" }, h("div", null, lbl(`Hülle ${a.hullHp}/${a.maxHullHp}`), Bar(num(a.maxHullHp) ? num(a.hullHp) / num(a.maxHullHp) * 100 : 0, num(a.hullHp) < num(a.maxHullHp) / 2 ? "bg-red-500" : "bg-emerald-500")), h("div", null, lbl(`Treibstoff ${a.fuel}/${a.maxFuel}`), Bar(num(a.maxFuel) ? num(a.fuel) / num(a.maxFuel) * 100 : 0, "bg-amber-500"))),
+        h("div", { className: "text-xs text-slate-300" }, `Geschwindigkeit: ${si.speed} (Basis ${a.baseSpeed}) · Crew ${st.used}/${a.crewMinimum} Minimum`),
+        si.warn.map((w, i) => Warn(w, i)),
+        h("div", { className: "text-xs text-slate-400" }, "Bewaffnung/Module: " + (a.weapons.length ? a.weapons.map((w) => { const t = TP.shipWeapons.find((x) => x.id === w.templateId) || {}; return `${w.name || t.name} (${t.damage || "–"}, ${t.range || "–"}, Munition ${t.ammo || "–"}, Crew ${t.crew || 0})`; }).join(" · ") : "keine") + ` · Slots ${a.weapons.length}/${a.weaponSlots || 2}`),
+        h("div", { className: "flex flex-wrap items-center gap-2" }, TI("fuelQ_" + b.id, "Menge", `${inp} w-20`), Btn(`Treibstoff kaufen (${G.fuelPrice} GM/Einheit)`, () => buyFuel(b), btnPrimary), TI("repQ_" + b.id, "HP", `${inp} w-20`), Btn(`Reparieren (${G.repairGold} GM + ${G.repairBp} BP je 10 HP)`, () => repairShip(b), btnPrimary), dm && Btn("Reisetag (−Treibstoff)", () => { const c = num(a.fuelPerDay) || 10; bmB(b.id, (x) => ({ ...x, airshipStats: { ...x.airshipStats, fuel: Math.max(0, num(x.airshipStats.fuel) - c) } })); }))),
+      h("div", { className: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3" }, b.facilities.map((f) => facCard(b, f, st)), b.facilities.length === 0 && h("div", { className: "text-sm text-slate-500" }, "Noch keine Einrichtungen.")),
+      h("div", { className: sub }, lbl("Neue Einrichtung bauen"), h("div", { className: "flex flex-wrap gap-2 items-center" }, Sel(uv("bf_" + b.id, (TP.facilities[0] || {}).id || ""), TP.facilities.map((t) => [t.id, `${t.name} – ${dcost((t.levels[0] || {}).gold, st.disc)} GM, ${dcost((t.levels[0] || {}).bp, st.disc)} BP`]), (v) => su("bf_" + b.id, v)), Btn("Bauen", () => buildFac(b, uv("bf_" + b.id, (TP.facilities[0] || {}).id)), btnPrimary))),
+      h("div", { className: sub }, lbl("Garnison / Crew (Squads à " + G.squadSize + ")"),
+        b.garrison.map((g, i) => h("div", { key: i, className: "flex justify-between text-xs text-slate-200" }, h("span", null, `${g.name}: ${g.squadCount} Squad(s), ${g.headcount} Mann${st.squadsAway(g.unitTemplateId) ? ` (${st.squadsAway(g.unitTemplateId)} auf Mission)` : ""}`), dm && Btn("✕", () => bmB(b.id, (x) => ({ ...x, garrison: x.garrison.filter((_, j) => j !== i) })), btnDanger))), b.garrison.length === 0 && h("div", { className: "text-xs text-slate-500" }, "Keine Truppen."),
+        b.missions.map((x) => h("div", { key: x.id, className: "flex justify-between text-xs text-cyan-300" }, h("span", null, `Mission „${x.label}“: ${x.squads} Squad(s) ${(tplU(x.unitTemplateId) || {}).name || ""}, noch ${x.turnsRemaining} Rd.`), dm && Btn("✕", () => bmB(b.id, (y) => ({ ...y, missions: y.missions.filter((z) => z.id !== x.id) })), btnDanger))),
+        st.exped ? h("div", { className: "flex flex-wrap gap-2 items-center" }, Sel(uv("ms_u_" + b.id, (TP.units[0] || {}).id || ""), TP.units.map((u) => [u.id, u.name]), (v) => su("ms_u_" + b.id, v)), TI("ms_n_" + b.id, "Squads", `${inp} w-20`), TI("ms_t_" + b.id, "Runden", `${inp} w-20`), TI("ms_l_" + b.id, "Missionsziel"), Btn("Mission starten", () => sendMission(b), btnPrimary)) : h("div", { className: "text-[11px] text-slate-500" }, "Missionen: Kommandobrücke/Kriegsraum Stufe 2+ nötig.")));
+  };
+  const renderBastionen = () => {
+    const [tab, tabs] = dm ? SubTabs("bmTab", "main", [["main", "Bastionen"], ["round", "DM: Runde & Ereignisse"], ["bast", "DM: Bastionen verwalten"], ["tpl", "DM: Vorlagen-Editor"]]) : ["main", null];
+    const selId = uv("bmSel", ""); const sel = bm.bastions.find((b) => b.id === selId) || bm.bastions[0];
+    const pool = h("div", { className: "flex gap-4 text-right" }, h("div", null, h("div", { className: "text-lg font-extrabold text-amber-300" }, `${G.gold} GM`), lbl("Gold")), h("div", null, h("div", { className: "text-lg font-extrabold text-cyan-300" }, `${G.bastionPoints} BP`), lbl("Bastionspunkte")), h("div", null, h("div", { className: "text-lg font-extrabold text-slate-200" }, `Rd. ${G.turnCounter}`), lbl("Runde")));
+    const logList = G.eventLog.filter((e) => dm || !e.secret);
+    const dmRound = h("div", { className: "space-y-4" },
+      h("div", { className: sub }, h("div", { className: "flex flex-wrap items-center gap-3" }, Btn("Bastions-Runde auswerten", evalRound, btnPrimary), Chk("Ereignis mitwürfeln", uv("rndEvent", false), (v) => su("rndEvent", v)), Chk("Auswirkungen automatisch anwenden", uv("evAuto", true), (v) => su("evAuto", v)), Chk("Ereignis geheim", uv("evSecret", false), (v) => su("evSecret", v))),
+        h("div", { className: "flex flex-wrap items-center gap-2" }, Btn("W100-Ereignis würfeln", () => rollEvt(uv("evSecret", false), sel && sel.id)), Sel(uv("evManual", (TP.events[0] || {}).id || ""), TP.events.map((e) => [e.id, e.title]), (v) => su("evManual", v)), Btn("Manuell auslösen", () => rollEvt(uv("evSecret", false), sel && sel.id, uv("evManual", (TP.events[0] || {}).id)))), lbl("Ereignis-Auswirkungen auf Hülle/Truppen betreffen die oben gewählte Bastion.")),
+      h("div", { className: sub }, lbl("Gruppen-Pool & Regelwerte"), h("div", { className: "flex flex-wrap gap-2" }, [["gold", "Gold"], ["bastionPoints", "BP"], ["turnCounter", "Runde"], ["squadSize", "Squad-Größe"], ["fuelPrice", "Treibstoffpreis"], ["repairGold", "Reparatur GM/10HP"], ["repairBp", "Reparatur BP/10HP"]].map(([k, l]) => h("label", { key: k, className: "text-[11px] text-slate-500 flex flex-col" }, l, Fld("g" + k, String(G[k]), (v) => bmG({ [k]: num(v) }), { cls: `${inp} w-24`, type: "number" }))))),
+      h("div", { className: sub }, lbl("Lager / Inventar"), G.storageInventory.map((i) => h("div", { key: i.id, className: "flex items-center gap-2 text-xs text-slate-200" }, Fld("si" + i.id, i.name, (v) => bmG({ storageInventory: G.storageInventory.map((x) => x.id === i.id ? { ...x, name: v } : x) }), { cls: `${inp} flex-1` }), Fld("sq" + i.id, String(i.qty), (v) => bmG({ storageInventory: G.storageInventory.map((x) => x.id === i.id ? { ...x, qty: num(v) } : x) }), { cls: `${inp} w-16`, type: "number" }), Btn("✕", () => bmG({ storageInventory: G.storageInventory.filter((x) => x.id !== i.id) }), btnDanger))),
+        h("div", { className: "flex gap-2" }, TI("niName", "Gegenstand / Spezialzutat"), TI("niQty", "Menge", `${inp} w-20`), Btn("Hinzufügen", () => { if (!uv("niName").trim()) return; bmG({ storageInventory: [...G.storageInventory, { id: uid("inv"), name: uv("niName").trim(), qty: Math.max(1, num(uv("niQty", "1"))) }] }); setUi((p) => ({ ...p, niName: "", niQty: "" })); }, btnPrimary))),
+      h("div", { className: sub }, lbl("Freigeschaltete Blaupausen"), h("div", { className: "flex flex-wrap gap-3" }, TP.craftables.map((c) => h("span", { key: c.id }, Chk(c.name, G.unlockedBlueprints.includes(c.id), (on) => bmUp((m) => ({ ...m, touched: { ...m.touched, bp: true }, globalState: { ...m.globalState, unlockedBlueprints: on ? [...m.globalState.unlockedBlueprints, c.id] : m.globalState.unlockedBlueprints.filter((i) => i !== c.id) } }))))))));
+    const dmBast = h("div", { className: "space-y-4" },
+      h("div", { className: sub }, lbl("Neue Bastion"), h("div", { className: "flex flex-wrap gap-2" }, TI("nbName", "Name"), Sel(uv("nbType", "fortress"), [["fortress", "Festung"], ["airship", "Luftschiff"], ["guildhall", "Gildenhaus"], ["ship", "Schiff"], ["other", "Sonstiges"]], (v) => su("nbType", v)), Sel(uv("nbTier", "1"), [1, 2, 3, 4].map((n) => [String(n), `Stufe ${n}`]), (v) => su("nbTier", v)), Btn("Anlegen", () => { if (!uv("nbName").trim()) return; const type = uv("nbType", "fortress"), tier = num(uv("nbTier", "1")); const nb = { id: uid("bastion"), name: uv("nbName").trim(), type, tier, maxSlots: TIERS[tier].slots, customBpBonus: 0, defenseBonus: 0, baseBpOverride: "", maxFacLevel: "", facilities: [], garrison: [], missions: [], airshipStats: type === "airship" ? { hullHp: 50, maxHullHp: 50, fuel: 100, maxFuel: 100, baseSpeed: 3, crewMinimum: 10, fuelPerDay: 10, weaponSlots: 2, weapons: [] } : null }; bmUp((m) => ({ ...m, bastions: [...m.bastions, nb] })); su("nbName", ""); su("bmSel", nb.id); }, btnPrimary))),
+      bm.bastions.map((b) => h("div", { key: b.id, className: sub },
+        h("div", { className: "flex flex-wrap items-end gap-2" }, Fld("bn" + b.id, b.name, (v) => bmB(b.id, { name: v }), { cls: `${inp} w-40 font-bold` }), Sel(b.type, [["fortress", "Festung"], ["airship", "Luftschiff"], ["guildhall", "Gildenhaus"], ["ship", "Schiff"], ["other", "Sonstiges"]], (v) => bmB(b.id, (x) => ({ ...x, type: v, airshipStats: v === "airship" && !x.airshipStats ? { hullHp: 50, maxHullHp: 50, fuel: 100, maxFuel: 100, baseSpeed: 3, crewMinimum: 10, fuelPerDay: 10, weaponSlots: 2, weapons: [] } : x.airshipStats }))), Sel(String(b.tier), [1, 2, 3, 4].map((n) => [String(n), `Stufe ${n}`]), (v) => bmB(b.id, { tier: num(v) })), FB(b, "maxSlots", "Slots"), FB(b, "baseBpOverride", "Basis-BP (leer=Tabelle)"), FB(b, "customBpBonus", "BP-Bonus"), FB(b, "defenseBonus", "Verteidigung"), FB(b, "maxFacLevel", "Max. Geb.-Stufe (leer=Tabelle)", "w-24"), Btn("Bastion löschen", () => { if (window.confirm(`„${b.name}“ samt Einrichtungen löschen?`)) bmUp((m) => ({ ...m, bastions: m.bastions.filter((x) => x.id !== b.id) })); }, btnDanger)),
+        b.airshipStats && h("div", { className: "flex flex-wrap items-end gap-2 border-t border-slate-800 pt-2" }, FA(b, "hullHp", "Hülle"), FA(b, "maxHullHp", "Max. Hülle"), FA(b, "fuel", "Treibstoff"), FA(b, "maxFuel", "Max. Tank"), FA(b, "baseSpeed", "Geschw."), FA(b, "crewMinimum", "Crew-Min."), FA(b, "fuelPerDay", "Verbr./Tag"), FA(b, "weaponSlots", "Waffen-Slots"),
+          Sel("", [["", "+ Waffe/Modul …"], ...TP.shipWeapons.map((w) => [w.id, `${w.name} (${w.kind})`])], (v) => { const w = TP.shipWeapons.find((x) => x.id === v); if (w) bmB(b.id, (x) => ({ ...x, airshipStats: { ...x.airshipStats, weapons: [...x.airshipStats.weapons, { id: uid("w"), templateId: w.id, name: w.name }] } })); }),
+          b.airshipStats.weapons.map((w) => h("span", { key: w.id, className: "text-xs text-slate-300" }, w.name, " ", Btn("✕", () => bmB(b.id, (x) => ({ ...x, airshipStats: { ...x.airshipStats, weapons: x.airshipStats.weapons.filter((y) => y.id !== w.id) } })), btnDanger)))),
+        h("div", { className: "flex flex-wrap items-center gap-2 border-t border-slate-800 pt-2" }, lbl("Truppen hinzufügen:"), Sel(uv("gu_" + b.id, (TP.units[0] || {}).id || ""), TP.units.map((u) => [u.id, u.name]), (v) => su("gu_" + b.id, v)), TI("gn_" + b.id, "Squads", `${inp} w-20`), Btn("Hinzufügen", () => { const u = tplU(uv("gu_" + b.id, (TP.units[0] || {}).id)); const n = Math.max(1, num(uv("gn_" + b.id, "1"))); if (!u) return; bmB(b.id, (x) => { const ex = x.garrison.find((g) => g.unitTemplateId === u.id); return { ...x, garrison: ex ? x.garrison.map((g) => g === ex ? { ...g, squadCount: num(g.squadCount) + n, headcount: num(g.headcount) + n * num(G.squadSize) } : g) : [...x.garrison, { unitTemplateId: u.id, name: u.name, squadCount: n, headcount: n * num(G.squadSize) }] }; }); }, btnPrimary)))));
+    const facFields = [["gold", "GM", "number"], ["bp", "BP", "number"], ["turns", "Runden", "number"], ["bpBonus", "BP/Rd.", "number"], ["capacity", "Kapazität", "number"], ["defense", "Vert.", "number"], ["extraOrders", "Zus.-Befehle", "number"], ["expeditions", "Exped. 0/1", "number"], ["discountPct", "Rabatt %", "number"], ["tradeGold", "Handel GM", "number"]];
+    const TplEd = (k, title, fields, mk) => h("div", { className: sub }, lbl(title), h("div", { className: "text-[10px] text-slate-600" }, "Spalten: " + fields.map((f) => f[1]).join(" · ")), TP[k].map((it) => h("div", { key: it.id, className: "flex flex-wrap gap-1.5 items-center border-b border-slate-800 pb-1.5" }, fields.map(([fk, ph, ty, w]) => Fld(`${k}${it.id}${fk}`, String(it[fk] == null ? "" : it[fk]), (v) => bmT(k, TP[k].map((x) => x.id === it.id ? { ...x, [fk]: ty === "number" ? num(v) : v } : x)), { cls: `${inp} ${w || (ty === "number" ? "w-20" : "w-36")}`, type: ty === "number" ? "number" : "text", ph })), Btn("✕", () => bmT(k, TP[k].filter((x) => x.id !== it.id)), btnDanger))), Btn("+ Neu", () => bmT(k, [...TP[k], mk()]), btnPrimary));
+    const dmTpl = h("div", { className: "space-y-4" },
+      h("div", { className: sub }, lbl("Gebäudetypen & Stufen-Effekte, Kosten, Bauzeiten"), TP.facilities.map((t) => h("div", { key: t.id, className: "border-b border-slate-800 pb-2 space-y-1" },
+        h("div", { className: "flex gap-2 items-center" }, Fld("tfn" + t.id, t.name, (v) => bmT("facilities", TP.facilities.map((x) => x.id === t.id ? { ...x, name: v } : x)), { cls: `${inp} w-64 font-bold` }), Btn("Typ löschen", () => bmT("facilities", TP.facilities.filter((x) => x.id !== t.id)), btnDanger), Btn("+ Stufe", () => bmT("facilities", TP.facilities.map((x) => x.id === t.id ? { ...x, levels: [...x.levels, LV(0, 0, 1)] } : x)))),
+        t.levels.map((l, i) => h("div", { key: i, className: "flex flex-wrap gap-1.5 items-center" }, Tag(`St. ${i + 1}`), facFields.map(([fk, ph]) => Fld(`tl${t.id}${i}${fk}`, String(l[fk] == null ? "" : l[fk]), (v) => bmT("facilities", TP.facilities.map((x) => x.id === t.id ? { ...x, levels: x.levels.map((y, j) => j === i ? { ...y, [fk]: v === "" ? undefined : num(v) } : y) } : x)), { cls: `${inp} w-16`, type: "number", ph })), Fld(`tld${t.id}${i}`, l.desc || "", (v) => bmT("facilities", TP.facilities.map((x) => x.id === t.id ? { ...x, levels: x.levels.map((y, j) => j === i ? { ...y, desc: v } : y) } : x)), { cls: `${inp} w-56`, ph: "Effekt-Text" }), Btn("✕", () => bmT("facilities", TP.facilities.map((x) => x.id === t.id ? { ...x, levels: x.levels.filter((_, j) => j !== i) } : x)), btnDanger))))),
+        h("div", { className: "text-[10px] text-slate-600" }, "Stufenfelder: " + facFields.map((f) => f[1]).join(" · ")), Btn("+ Neuer Gebäudetyp", () => bmT("facilities", [...TP.facilities, { id: uid("ft"), name: "Neue Einrichtung", levels: [LV(100, 1, 1, { desc: "" })] }]), btnPrimary)),
+      TplEd("units", "Truppentypen", [["name", "Name", "text", "w-48"], ["gold", "Rekrutierung GM", "number"], ["bp", "BP", "number"], ["turns", "Runden", "number"], ["sold", "Sold/Rd. je Squad", "number"], ["combat", "Kampfwert", "number"]], () => ({ id: uid("ut"), name: "Neue Truppe", gold: 100, bp: 1, turns: 1, sold: 10, combat: 1 })),
+      TplEd("craftables", "Blaupausen / Crafting-Items (Zutat = Spezialzutat aus dem Lager)", [["name", "Name", "text", "w-44"], ["facilityId", "Gebäudetyp-ID", "text", "w-24"], ["minLevel", "Min.-Stufe", "number"], ["gold", "GM", "number"], ["turns", "Runden", "number"], ["ingredient", "Spezialzutat", "text", "w-32"], ["researchBp", "Forsch.-BP", "number"], ["researchTurns", "Forsch.-Rd.", "number"]], () => ({ id: uid("cr"), name: "Neues Item", facilityId: "", minLevel: 1, gold: 50, turns: 1, ingredient: "", researchBp: 2, researchTurns: 1 })),
+      TplEd("shipWeapons", "Luftschiff-Waffen & Module", [["name", "Name", "text", "w-44"], ["kind", "Art", "text", "w-20"], ["damage", "Schaden", "text", "w-20"], ["range", "Reichweite", "text", "w-28"], ["ammo", "Munition", "text", "w-24"], ["crew", "Crew", "number"], ["gold", "GM", "number"], ["speedMod", "Geschw.-Mod.", "number"]], () => ({ id: uid("sw"), name: "Neue Waffe", kind: "Waffe", damage: "", range: "", ammo: "", crew: 1, gold: 100, speedMod: 0 })),
+      TplEd("events", "Ereignistabelle (W100 bis …)", [["upTo", "W100 bis", "number"], ["title", "Titel", "text", "w-40"], ["text", "Text", "text", "w-72"], ["gold", "GM", "number"], ["bp", "BP", "number"], ["hull", "Hülle", "number"], ["troops", "Squads ±", "number"]], () => ({ id: uid("be"), upTo: 100, title: "Neues Ereignis", text: "", gold: 0, bp: 0, hull: 0, troops: 0 })));
+    return h("div", { className: panelBox }, Head(Shield, "Bastionen & Luftschiffe", `Gemeinsamer Pool · ${bm.bastions.length} Bastion(en) · ${G.unlockedBlueprints.length} Blaupause(n)`, pool), tabs,
+      tab === "main" && h("div", { className: "space-y-4" },
+        h("div", { className: "flex flex-wrap gap-2" }, bm.bastions.map((b) => h("button", { key: b.id, onClick: () => su("bmSel", b.id), className: tabBtn(sel && sel.id === b.id) }, `${b.type === "airship" ? "✈ " : ""}${b.name}`))),
+        sel ? bastionView(sel) : h("p", { className: "text-sm text-slate-500" }, "Noch keine Bastion – der DM legt sie im DM-Kontrollzentrum an."),
+        h("div", { className: sub }, lbl("Lager & Blaupausen"), h("div", { className: "text-xs text-slate-300" }, "Lager: " + (G.storageInventory.map((i) => `${i.name} ×${i.qty}`).join(", ") || "leer")), h("div", { className: "text-xs text-slate-300" }, "Blaupausen: " + (G.unlockedBlueprints.map((i) => (tplC(i) || {}).name).filter(Boolean).join(", ") || "keine"))),
+        logList.length > 0 && h("div", { className: sub }, lbl("Ereignisse & Runden-Protokoll"), logList.map((e) => h("div", { key: e.id, className: `text-xs flex justify-between gap-2 ${/Angriff/.test(e.text) ? "text-red-300" : "text-slate-300"}` }, h("span", null, `${e.time} · ${e.secret ? "🔒 " : ""}${e.text}`), dm && Btn("✕", () => bmG({ eventLog: G.eventLog.filter((x) => x.id !== e.id) }), btnDanger))))),
+      dm && tab === "round" && dmRound, dm && tab === "bast" && dmBast, dm && tab === "tpl" && dmTpl);
+  };
+
+  const renderModule = (k) => k === "bastionen" ? renderBastionen() : k === "bastion" ? (dm ? renderBastionDm() : renderBastionPlayer()) : k === "factions" ? renderFactions() : k === "quests" ? renderQuests() : k === "lore" ? renderLore() : k === "downtime" ? renderDowntime() : renderPlaceholderModule(k);
   const weekBanner = dm && cal.weekReminder && h("div", { className: "mb-4 bg-amber-950/40 border border-amber-500/50 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3" },
     h("div", { className: "text-sm text-amber-200 font-semibold" }, "⏳ 7 Ingame-Tage sind vergangen – Lebenshaltungskosten einziehen oder Bastions-Runde auslösen?"),
     h("div", { className: "flex flex-wrap gap-2" }, Btn("Lebenshaltung einziehen", collectUpkeep, btnPrimary), Btn("Bastions-Runde auslösen", runBastionRound, btnPrimary), Btn("Später", () => setCM({ calendar: { ...cal, weekReminder: false } }))));
