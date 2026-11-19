@@ -56,7 +56,7 @@ const FIREBASE_CONFIG = {
 
 const FIREBASE_ROOT = "dnd55/state";
 const FIREBASE_ENABLED = !!FIREBASE_CONFIG.databaseURL;
-const SYNC_KEYS = ["characters", "shopTabs", "logs", "pendingRequests", "standard", "campaignMeta", "bagOfHolding"];
+const SYNC_KEYS = ["characters", "shopTabs", "logs", "pendingRequests", "standard", "campaignMeta", "bagOfHolding", "bastion", "factions", "quests", "lexicon", "craftingProjects"];
 
 const normalizeInventoryItem = (it) => ({
   id: it.id || ("inv_" + Math.random().toString(36).slice(2, 8)),
@@ -166,7 +166,7 @@ const Eye = makeIcon("Eye");
 const CAMPAIGN_TABS = [
   { id: "finances", label: "Finanzen & Shops", Icon: Coins },
   { id: "inventory", label: "Inventar, Traglast & Attunement", Icon: Backpack },
-  { id: "bastion", label: "Bastions-Manager (2024)", Icon: Castle },
+  { id: "bastion", label: "Unsere Bastion", Icon: Castle },
   { id: "factions", label: "Ruf & Fraktionen", Icon: Flag },
   { id: "quests", label: "Quest Log", Icon: ScrollText },
   { id: "lore", label: "NPC- & Ortslexikon", Icon: BookOpen },
@@ -632,6 +632,60 @@ function getEncumbranceStats(char, useVariant = false) {
   };
 }
 
+// ===== NEUE MODULE: Konstanten & Normalizer =====
+const h = React.createElement;
+const A = (x) => Array.isArray(x) ? x : (x && typeof x === "object" ? Object.values(x) : []);
+const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+const uid = (p) => p + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+const MONTHS = ["Hammer", "Alturiak", "Ches", "Tarsakh", "Mirtul", "Kythorn", "Flamerule", "Eleasis", "Eleint", "Marpenoth", "Uktar", "Nightal"];
+const CMDS = { craft: "Craft (Handwerk)", empower: "Empower (Stärkung)", harvest: "Harvest (Ernte)", maintain: "Maintain (Wartung)", recruit: "Recruit (Rekrutierung)", research: "Research (Forschung)", trade: "Trade (Handel)" };
+const BEVENTS = [
+  [50, "Alles ruhig", "Nichts Besonderes geschieht."],
+  [55, "Angriff", "Die Bastion wird angegriffen. Verteidiger und Wehrmauern entscheiden über die Verluste."],
+  [58, "Krimineller Gefolgsmann", "Ein Angestellter hat Dreck am Stecken – eine Untersuchung ist nötig."],
+  [63, "Außergewöhnliche Gelegenheit", "Ein lukratives Geschäft oder eine seltene Chance bietet sich an."],
+  [72, "Freundlicher Besuch", "Wohlgesinnte Besucher schauen vorbei."],
+  [76, "Gast", "Ein Gast bittet um Unterkunft und bringt ggf. einen Vorteil mit."],
+  [79, "Verlorene Gefolgsleute", "Gefolgsleute sind verschwunden oder überfällig."],
+  [83, "Magische Entdeckung", "Auf dem Gelände wird etwas Magisches entdeckt."],
+  [91, "Flüchtlinge", "Flüchtlinge suchen Zuflucht in der Bastion."],
+  [98, "Hilfsgesuch", "Jemand bittet die Bastion um Hilfe."],
+  [100, "Schatz", "Ein Schatz wird gefunden."]
+];
+const SITE_KINDS = ["Festung", "Luftschiff", "Turm", "Schiff", "Gildenhalle", "Höhle"];
+const KIND_LABEL = { room: "Einrichtung", upgrade: "Upgrade", defender: "Verteidiger", site: "Neue Bastion" };
+const CRAFT_TYPES = ["Waffe schmieden", "Trank brauen", "Schriftrolle schreiben", "Recherche", "Training"];
+const Q_CATS = ["Hauptquest", "Fraktionsauftrag", "Gerücht"];
+const Q_STATES = ["Aktiv", "Erledigt", "Gescheitert"];
+const FACTION_CATS = ["Gilde", "Königreich", "Kult", "Adel"];
+const rankOf = (r) => r <= -75 ? ["Erzfeind", "text-red-400"] : r <= -50 ? ["Feindlich", "text-red-400"] : r < -10 ? ["Misstrauisch", "text-orange-300"] : r <= 10 ? ["Neutral", "text-slate-300"] : r < 50 ? ["Wohlgesinnt", "text-emerald-300"] : r < 90 ? ["Verbündeter", "text-emerald-400"] : ["Ehrentitel", "text-amber-300"];
+const DEFAULT_FACTIONS = [
+  { id: "fac_gilde", name: "Händlergilde", category: "Gilde", description: "Kaufleute und Handwerker der Region.", renown: 0, hidden: false, privileges: "Ab +50: Rabatt bei Gildenhändlern.", notes: "", secretNotes: "", charRenown: {}, shopTabIds: [] },
+  { id: "fac_krone", name: "Die Krone", category: "Königreich", description: "Das Königreich und seine Beamten.", renown: 0, hidden: false, privileges: "", notes: "", secretNotes: "", charRenown: {}, shopTabIds: [] }
+];
+const DEFAULT_BASTION_SHOP = [
+  { id: "bs_forge", kind: "room", name: "Schmiede", cost: 10, desc: "Spezialeinrichtung zum Herstellen von Waffen und Rüstungen.", roomType: "Special", level: 1 },
+  { id: "bs_library", kind: "room", name: "Bibliothek", cost: 10, desc: "Spezialeinrichtung für Forschung und Wissen.", roomType: "Special", level: 1 },
+  { id: "bs_barracks", kind: "room", name: "Kaserne", cost: 8, desc: "Unterkunft und Ausbildung für Verteidiger.", roomType: "Special", level: 1 },
+  { id: "bs_garden", kind: "room", name: "Garten", cost: 6, desc: "Anbau von Kräutern und Zutaten.", roomType: "Basic", level: 1 },
+  { id: "bs_up", kind: "upgrade", name: "Einrichtung ausbauen (+1 Stufe)", cost: 8, desc: "Hebt die gewählte Einrichtung um eine Stufe an." },
+  { id: "bs_def", kind: "defender", name: "Verteidiger anwerben", cost: 3, desc: "Ein weiterer Verteidiger für die gewählte Einrichtung." },
+  { id: "bs_airship", kind: "site", name: "Luftschiff", cost: 40, desc: "Eine fliegende Bastion mit eigenen Einrichtungen.", siteKind: "Luftschiff" }
+];
+const defBastion = () => ({ sites: [{ id: "site_main", name: "Hauptbastion", kind: "Festung" }], rooms: [], bp: 0, defendersList: [], turn: 1, commands: {}, eventLog: [], shop: DEFAULT_BASTION_SHOP, requests: [], requireApproval: true });
+Object.assign(SYNC_NORMALIZERS, {
+  bastion: (v) => { const d = defBastion(); v = v || {}; return { ...d, ...v, sites: A(v.sites).length ? A(v.sites) : d.sites, rooms: A(v.rooms), defendersList: A(v.defendersList), eventLog: A(v.eventLog), requests: A(v.requests), shop: v.shop ? A(v.shop) : d.shop, commands: v.commands || {}, bp: parseInt(v.bp, 10) || 0, turn: parseInt(v.turn, 10) || 1, requireApproval: v.requireApproval !== false }; },
+  factions: (v) => A(v).map((f) => ({ category: "Gilde", description: "", renown: 0, hidden: false, privileges: "", notes: "", secretNotes: "", ...f, charRenown: f.charRenown || {}, shopTabIds: A(f.shopTabIds) })),
+  quests: (v) => A(v),
+  lexicon: (v) => ({ npcs: A(v && v.npcs).map((n) => ({ ...n, questIds: A(n.questIds) })), locations: A(v && v.locations), notes: (v && v.notes) || {} }),
+  craftingProjects: (v) => A(v)
+});
+const _cmNorm = SYNC_NORMALIZERS.campaignMeta;
+SYNC_NORMALIZERS.campaignMeta = (v) => {
+  const m = _cmNorm(v);
+  return { ...m, calendar: { day: 1, month: 0, year: 1492, timeOfDay: "Morgen", weekCounter: 0, totalDays: 0, weekReminder: false, ...(m.calendar || {}) }, recipes: A(m.recipes), sharedNotes: m.sharedNotes || "" };
+};
+
 function App() {
   // Authentifizierungs- & Rollen-Status VOR allen Reitern
   const [authMode, setAuthMode] = useState(null);
@@ -659,6 +713,30 @@ function App() {
   const [shopTabs, setShopTabs] = useState(INITIAL_SHOP_TABS);
   const [logs, setLogs] = useState(INITIAL_LOGS);
   const [pendingRequests, setPendingRequests] = useState([]);
+  // ===== NEUE MODULE: State & Helfer =====
+  const [bastion, setBastion] = useState(() => SYNC_NORMALIZERS.bastion(null));
+  const [factions, setFactions] = useState(DEFAULT_FACTIONS);
+  const [quests, setQuests] = useState([]);
+  const [lexicon, setLexicon] = useState(() => SYNC_NORMALIZERS.lexicon(null));
+  const [craftingProjects, setCraftingProjects] = useState([]);
+  const [ui, setUi] = useState({});
+  const uv = (k, d = "") => ui[k] === undefined ? d : ui[k];
+  const su = (k, v) => setUi((p) => ({ ...p, [k]: v }));
+  const cm = SYNC_NORMALIZERS.campaignMeta(campaignMeta);
+  const cal = cm.calendar;
+  const setCM = (patch) => setCampaignMeta((p) => ({ ...SYNC_NORMALIZERS.campaignMeta(p), ...patch }));
+  const effRenown = (f, cid) => clamp((parseInt(f.renown, 10) || 0) + ((f.charRenown || {})[cid] || 0), -100, 100);
+  const applyDisc = (cp, pct) => pct > 0 ? Math.max(1, Math.round(cp * (100 - pct) / 100)) : cp;
+  const tradeInfo = (tabId, cid) => {
+    const r = { blocked: false, discount: 0, faction: "" };
+    factions.forEach((f) => {
+      if (!A(f.shopTabIds).includes(tabId)) return;
+      const e = effRenown(f, cid);
+      if (e <= -50) { r.blocked = true; r.faction = f.name; }
+      else if (!r.blocked) { const d = e >= 80 ? 15 : e >= 50 ? 10 : 0; if (d > r.discount) { r.discount = d; r.faction = f.name; } }
+    });
+    return r;
+  };
   const [toast, setToast] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const [syncStatus, setSyncStatus] = useState(FIREBASE_ENABLED ? "connecting" : "local");
@@ -765,6 +843,11 @@ function App() {
         if (parsed.standard) setStandard(parsed.standard);
         if (parsed.campaignMeta) setCampaignMeta(SYNC_NORMALIZERS.campaignMeta(parsed.campaignMeta));
         if (parsed.dmPassword) setDmPassword(parsed.dmPassword);
+        if (parsed.bastion) setBastion(SYNC_NORMALIZERS.bastion(parsed.bastion));
+        if (parsed.factions) setFactions(SYNC_NORMALIZERS.factions(parsed.factions));
+        if (parsed.quests) setQuests(SYNC_NORMALIZERS.quests(parsed.quests));
+        if (parsed.lexicon) setLexicon(SYNC_NORMALIZERS.lexicon(parsed.lexicon));
+        if (parsed.craftingProjects) setCraftingProjects(SYNC_NORMALIZERS.craftingProjects(parsed.craftingProjects));
       }
       const params = new URLSearchParams(window.location.search);
       const playerParam = params.get("player");
@@ -820,6 +903,11 @@ function App() {
         if (next.pendingRequests) setPendingRequests(next.pendingRequests);
         if (next.standard) setStandard(next.standard);
         if (next.campaignMeta) setCampaignMeta(next.campaignMeta);
+        if (next.bastion) setBastion(next.bastion);
+        if (next.factions) setFactions(next.factions);
+        if (next.quests) setQuests(next.quests);
+        if (next.lexicon) setLexicon(next.lexicon);
+        if (next.craftingProjects) setCraftingProjects(next.craftingProjects);
       }
       setSyncStatus("live");
       setLoaded(true);
@@ -841,13 +929,13 @@ function App() {
     try {
       localStorage.setItem(
         "dnd55_economy_state_v3",
-        JSON.stringify({ characters, bagOfHolding, shopTabs, logs, pendingRequests, standard, campaignMeta, dmPassword })
+        JSON.stringify({ characters, bagOfHolding, shopTabs, logs, pendingRequests, standard, campaignMeta, dmPassword, bastion, factions, quests, lexicon, craftingProjects })
       );
     } catch (e) {
       console.error("Fehler beim Speichern:", e);
     }
     if (syncStatus !== "live" || !dbRef.current) return;
-    const values = { characters, bagOfHolding, shopTabs, logs, pendingRequests, standard, campaignMeta };
+    const values = { characters, bagOfHolding, shopTabs, logs, pendingRequests, standard, campaignMeta, bastion, factions, quests, lexicon, craftingProjects };
     const updates = {};
     SYNC_KEYS.forEach((k) => {
       const json = JSON.stringify(values[k]);
@@ -862,7 +950,7 @@ function App() {
         setSyncStatus("error");
       });
     }
-  }, [loaded, syncStatus, characters, bagOfHolding, shopTabs, logs, pendingRequests, standard, campaignMeta, dmPassword]);
+  }, [loaded, syncStatus, characters, bagOfHolding, shopTabs, logs, pendingRequests, standard, campaignMeta, dmPassword, bastion, factions, quests, lexicon, craftingProjects]);
 
   // Automatisches Öffnen des Genehmigungs-Popups in der DM-Zentrale bei neuen Anfragen
   useEffect(() => {
@@ -1088,8 +1176,14 @@ function App() {
     notify("Ausgabe-Anfrage zur Genehmigung an den DM gesendet!");
   };
 
-  const handleBuyMarketItem = (item) => {
-    const costCp = getItemCostCp(item, standard);
+  const handleBuyMarketItem = (item, tabId) => {
+    const ti = tradeInfo(tabId, activeChar.id);
+    if (ti.blocked) {
+      notify(`Die Händler der Fraktion „${ti.faction}“ verweigern den Handel – jemand ruft die Wache!`, "error");
+      addLog(activeChar.name, "dm_event", `Handel verweigert (${ti.faction})`, "Wache alarmiert", "Fraktions-System");
+      return;
+    }
+    const costCp = applyDisc(getItemCostCp(item, standard), ti.discount);
     const currentCp = getTotalCopper(activeChar.coins);
     if (currentCp < costCp) {
       notify("Nicht genug Vermögen für diesen Kauf.", "error");
@@ -2022,7 +2116,8 @@ function App() {
       React.createElement("p", { className: "text-xs text-slate-400" }, activeShopTab.description),
       React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3" },
         activeShopTab.items.map((item) => {
-          const cost = getItemCostCp(item, standard);
+          const ti = tradeInfo(activeShopTab.id, activeChar.id);
+          const cost = applyDisc(getItemCostCp(item, standard), ti.discount);
           const canAfford = activeCash >= cost;
           return React.createElement("div", { key: item.id, className: "p-4 rounded-xl bg-slate-950/60 border border-slate-800 flex flex-col gap-2" },
             React.createElement("div", { className: "flex justify-between items-start gap-2" },
@@ -2031,8 +2126,8 @@ function App() {
             ),
             React.createElement("p", { className: "text-xs text-slate-400 flex-1" }, item.desc),
             React.createElement("div", { className: "flex items-center justify-between gap-2" },
-              React.createElement("span", { className: "text-sm font-bold text-amber-300" }, fmt(cost)),
-              React.createElement("button", { disabled: !canAfford, onClick: () => handleBuyMarketItem(item), className: btnPrimary }, "Kauf anfragen")
+              React.createElement("span", { className: "text-sm font-bold text-amber-300" }, fmt(cost), ti.discount > 0 && h("span", { className: "text-[10px] text-emerald-400 ml-1" }, `−${ti.discount} % ${ti.faction}`), ti.blocked && h("span", { className: "text-[10px] text-red-400 ml-1" }, `Handel verweigert (${ti.faction})`)),
+              React.createElement("button", { disabled: !canAfford || ti.blocked, onClick: () => handleBuyMarketItem(item, activeShopTab.id), className: btnPrimary }, "Kauf anfragen")
             )
           );
         })
@@ -3180,6 +3275,302 @@ function App() {
   };
 
   // --- PLATZHALTER-ANSICHT FÜR DIE VERBLEIBENDEN KAMPAGNEN-REITER ---
+  // ===== NEUE MODULE: Bastion, Ruf, Quests, Lexikon, Downtime =====
+  const dm = authMode === "dm";
+  const me = loggedInPlayer;
+  const meId = me ? me.id : null;
+  const pcs = characters.filter((c) => !c.isParty);
+  const cname = (id) => (characters.find((c) => c.id === id) || {}).name || "?";
+  const sub = "bg-slate-950/60 border border-slate-800 rounded-xl p-3.5 space-y-2";
+  const ta = `${inp} w-full`;
+  const lbl = (t) => h("div", { className: "text-[11px] text-slate-500" }, t);
+  const Tag = (t, cls) => h("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full border whitespace-nowrap ${cls || "border-slate-600 bg-slate-800 text-slate-300"}` }, t);
+  const Bar = (pct, color) => h("div", { className: "h-2 rounded-full bg-slate-800 overflow-hidden" }, h("div", { className: `h-full ${color || "bg-emerald-500"}`, style: { width: `${clamp(pct, 0, 100)}%` } }));
+  const Btn = (label, onClick, cls, extra) => h("button", { onClick, className: cls || btnGhost, ...(extra || {}) }, label);
+  const Fld = (key, value, onCommit, o = {}) => h(o.area ? "textarea" : "input", { key: key + "|" + value, defaultValue: value, placeholder: o.ph || "", rows: o.area ? (o.rows || 2) : undefined, type: o.type || "text", className: o.cls || ta, onBlur: (e) => { if (e.target.value !== String(value)) onCommit(e.target.value); } });
+  const Sel = (value, opts, onChange, cls) => h("select", { value, onChange: (e) => onChange(e.target.value), className: cls || inp }, opts.map(([v, l]) => h("option", { key: v, value: v }, l)));
+  const TI = (k, ph, cls) => h("input", { className: cls || `${inp} flex-1 min-w-[8rem]`, placeholder: ph, value: uv(k), onChange: (e) => su(k, e.target.value) });
+  const Head = (Icon, title, subtitle, right) => h("div", { className: "flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 pb-4" },
+    h("div", { className: "flex items-center gap-3" },
+      h("div", { className: `p-2.5 rounded-xl border ${dm ? "bg-amber-500/15 border-amber-500/30 text-amber-400" : "bg-emerald-500/15 border-emerald-500/30 text-emerald-400"}` }, h(Icon, { className: "w-6 h-6" })),
+      h("div", null, h("h2", { className: "text-lg font-bold text-white" }, title), h("p", { className: "text-xs text-slate-400" }, subtitle))), right || null);
+  const SubTabs = (key, defv, list) => { const cur = uv(key, defv); return [cur, h("div", { className: "flex flex-wrap gap-2" }, list.map(([id, l]) => h("button", { key: id, onClick: () => su(key, id), className: tabBtn(cur === id) }, l)))]; };
+  const Chk = (label, checked, onChange) => h("label", { className: "text-xs text-slate-300 flex items-center gap-1.5 cursor-pointer" }, h("input", { type: "checkbox", checked: !!checked, onChange: (e) => onChange(e.target.checked) }), label);
+  const stamp = () => new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+  const num = (v) => parseInt(v, 10) || 0;
+
+  // ---------- BASTION ----------
+  const bUp = (fn) => setBastion((b) => fn(SYNC_NORMALIZERS.bastion(b)));
+  const updRoom = (id, p) => bUp((b) => ({ ...b, rooms: b.rooms.map((r) => r.id === id ? { ...r, ...p } : r) }));
+  const siteOf = (b, r) => b.sites.some((s) => s.id === r.siteId) ? r.siteId : b.sites[0].id;
+  const pushEvent = (b, text) => ({ ...b, eventLog: [{ id: uid("ev"), text, time: stamp() }, ...b.eventLog].slice(0, 30) });
+  const submitCmd = (room) => {
+    const cmd = uv("cmd_" + room.id, "craft");
+    bUp((b) => ({ ...b, commands: { ...b.commands, [room.id]: { cmd, note: uv("note_" + room.id), charId: meId, status: b.requireApproval ? "pending" : "approved" } } }));
+    notify(bastion.requireApproval ? "Befehl eingereicht – wartet auf DM-Freigabe." : "Befehl eingetragen.");
+  };
+  const runBastionRound = () => {
+    const b = SYNC_NORMALIZERS.bastion(bastion); const lines = []; let bp = b.bp; const defs = [...b.defendersList];
+    const rooms = b.rooms.map((r) => {
+      const c = b.commands[r.id];
+      if (!c || c.status !== "approved") return { ...r, status: "Untätig" };
+      const nr = { ...r }; const lb = CMDS[c.cmd];
+      if (c.cmd === "maintain") { nr.status = "Instandgesetzt"; lines.push(`${r.name}: Wartung`); }
+      else if (c.cmd === "recruit") { nr.defenders = (r.defenders || 0) + 1; nr.status = "Rekrutiert"; defs.push({ id: uid("def"), name: `Rekrut (Runde ${b.turn})`, roomId: r.id }); lines.push(`${r.name}: neuer Verteidiger`); }
+      else {
+        let p = (r.productionProgress || 0) + 100 / Math.max(1, r.turnsNeeded || 2); nr.status = lb.split(" ")[0];
+        if (p >= 99) { p = 0; const g = c.cmd === "trade" ? 2 : c.cmd === "harvest" ? 1 : 0; bp += g; lines.push(`${r.name}: ${lb} abgeschlossen${g ? ` (+${g} BP)` : ""}`); }
+        else lines.push(`${r.name}: ${lb} ${Math.round(p)} %`);
+        nr.productionProgress = Math.round(p);
+      }
+      return nr;
+    });
+    setBastion(pushEvent({ ...b, rooms, bp, defendersList: defs, commands: {}, turn: b.turn + 1 }, `Runde ${b.turn}: ${lines.length ? lines.join("; ") : "keine Befehle"}`));
+    addLog("Bastion", "dm_event", `Bastions-Runde ${b.turn} ausgewertet`, lines.length ? `${lines.length} Befehle` : "Keine Befehle", "DM");
+    notify(`Bastions-Runde ${b.turn} ausgewertet.`);
+  };
+  const rollBastionEvent = () => {
+    const roll = 1 + Math.floor(Math.random() * 100); const ev = BEVENTS.find((e) => roll <= e[0]);
+    bUp((b) => pushEvent(b, `W100 ${roll} – ${ev[1]}: ${ev[2]}`));
+    addLog("Bastion", "dm_event", `Bastions-Ereignis: ${ev[1]}`, `W100 ${roll}`, "DM");
+    notify(`W100 ${roll}: ${ev[1]}`);
+  };
+  const requestShop = (it, roomId, siteId) => {
+    bUp((b) => ({ ...b, requests: [...b.requests, { id: uid("bq"), charId: meId, charName: cname(meId), itemId: it.id, name: it.name, cost: it.cost, roomId: roomId || "", siteId: siteId || "" }] }));
+    notify(`Anfrage „${it.name}“ an den DM gesendet.`);
+  };
+  const approveShop = (q) => {
+    const b = SYNC_NORMALIZERS.bastion(bastion); const it = b.shop.find((x) => x.id === q.itemId);
+    if (!it || b.bp < q.cost) { notify("Nicht genug BP oder Artikel entfernt.", "error"); return; }
+    const nb = { ...b, bp: b.bp - q.cost, requests: b.requests.filter((x) => x.id !== q.id) };
+    if (it.kind === "room") nb.rooms = [...nb.rooms, { id: uid("room"), name: it.name, type: it.roomType || "Special", level: it.level || 1, defenders: 0, status: "Untätig", productionProgress: 0, ownerId: q.charId, siteId: q.siteId || b.sites[0].id, turnsNeeded: 2 }];
+    else if (it.kind === "upgrade") nb.rooms = nb.rooms.map((r) => r.id === q.roomId ? { ...r, level: Math.min(5, (r.level || 1) + 1) } : r);
+    else if (it.kind === "defender") { nb.rooms = nb.rooms.map((r) => r.id === q.roomId ? { ...r, defenders: (r.defenders || 0) + 1 } : r); nb.defendersList = [...nb.defendersList, { id: uid("def"), name: it.name, roomId: q.roomId }]; }
+    else if (it.kind === "site") nb.sites = [...nb.sites, { id: uid("site"), name: it.name, kind: it.siteKind || "Luftschiff" }];
+    setBastion(nb); addLog(q.charName, "expense", `Bastion: ${it.name}`, `-${q.cost} BP`, "DM-Genehmigt"); notify(`Genehmigt: ${it.name}`);
+  };
+  const roomCard = (r) => {
+    const c = bastion.commands[r.id]; const defs = bastion.defendersList.filter((d) => d.roomId === r.id);
+    return h("div", { key: r.id, className: sub },
+      h("div", { className: "flex justify-between gap-2" }, h("span", { className: "font-semibold text-sm text-white" }, r.name), Tag(r.type === "Special" ? "Spezial" : "Basis", r.type === "Special" ? "border-purple-600/50 bg-purple-950/40 text-purple-300" : undefined)),
+      h("div", { className: "text-xs text-slate-400" }, `Stufe ${r.level} · Verteidiger: ${r.defenders || 0} · ${r.status}${r.ownerId ? " · " + cname(r.ownerId) : ""}`),
+      Bar(r.productionProgress || 0, "bg-amber-500"),
+      defs.length > 0 && h("div", { className: "text-[11px] text-slate-500" }, defs.map((d) => d.name).join(", ")),
+      c && h("div", { className: "text-[11px] text-cyan-300" }, `Befehl: ${CMDS[c.cmd]} (${c.status === "approved" ? "freigegeben" : "wartet auf DM"})`));
+  };
+  const eventList = (b) => b.eventLog.length > 0 && h("div", { className: sub }, lbl("Ereignisse & Runden-Protokoll"), b.eventLog.map((e) => h("div", { key: e.id, className: `text-xs ${/Angriff/.test(e.text) ? "text-red-300" : "text-slate-300"}` }, `${e.time} · ${e.text}`)));
+  const renderBastionPlayer = () => {
+    const b = bastion; const [tab, tabs] = SubTabs("bTab", "overview", [["overview", "Übersicht"], ["orders", "Befehle"], ["shop", "Bastions-Shop"]]);
+    const myRooms = b.rooms.filter((r) => !r.ownerId || r.ownerId === meId);
+    const myReq = b.requests.filter((q) => q.charId === meId);
+    return h("div", { className: panelBox }, Head(Castle, "Unsere Bastion", `Bastions-Runde ${b.turn} · ${b.defendersList.length} benannte Verteidiger`, h("div", { className: "text-right" }, h("div", { className: "text-xl font-extrabold text-amber-300" }, `${b.bp} BP`), lbl("Bastionspunkte"))), tabs,
+      tab === "overview" && h("div", { className: "space-y-4" },
+        b.sites.map((s) => h("div", { key: s.id, className: "space-y-2" }, h("div", { className: "flex items-center gap-2 text-sm font-bold text-amber-200" }, s.name, Tag(s.kind, "border-cyan-700/50 bg-cyan-950/40 text-cyan-300")), h("div", { className: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3" }, b.rooms.filter((r) => siteOf(b, r) === s.id).map(roomCard)))),
+        b.rooms.length === 0 && h("p", { className: "text-sm text-slate-500" }, "Noch keine Einrichtungen – der DM schaltet sie im Bastions-Shop frei."), eventList(b)),
+      tab === "orders" && h("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-3" },
+        myRooms.map((r) => h("div", { key: r.id, className: sub }, h("div", { className: "text-sm font-semibold text-white" }, r.name), Sel(uv("cmd_" + r.id, "craft"), Object.entries(CMDS), (v) => su("cmd_" + r.id, v), `${inp} w-full`), TI("note_" + r.id, "Notiz / Ziel (z. B. Heiltränke)", ta), Btn("Befehl für nächsten Zug einreichen", () => submitCmd(r), btnPrimary), b.commands[r.id] && h("div", { className: "text-[11px] text-cyan-300" }, `Aktuell: ${CMDS[b.commands[r.id].cmd]} (${b.commands[r.id].status === "approved" ? "freigegeben" : "wartet auf DM"})`))),
+        myRooms.length === 0 && h("p", { className: "text-sm text-slate-500" }, "Keine Einrichtung, für die du Befehle geben kannst.")),
+      tab === "shop" && h("div", { className: "space-y-3" },
+        myReq.length > 0 && h("div", { className: "text-xs text-amber-300" }, `Offene Anfragen: ${myReq.map((q) => q.name).join(", ")}`),
+        h("div", { className: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3" }, b.shop.map((it) => {
+          const needsRoom = it.kind === "upgrade" || it.kind === "defender"; const rid = uv("shopRoom_" + it.id, (b.rooms[0] || {}).id || ""); const sid = uv("shopSite_" + it.id, b.sites[0].id);
+          return h("div", { key: it.id, className: sub }, h("div", { className: "flex justify-between gap-2" }, h("span", { className: "font-semibold text-sm text-white" }, it.name), Tag(KIND_LABEL[it.kind] || it.kind)), h("p", { className: "text-xs text-slate-400" }, it.desc),
+            needsRoom && Sel(rid, b.rooms.map((r) => [r.id, r.name]), (v) => su("shopRoom_" + it.id, v), `${inp} w-full`),
+            it.kind === "room" && Sel(sid, b.sites.map((s) => [s.id, s.name]), (v) => su("shopSite_" + it.id, v), `${inp} w-full`),
+            h("div", { className: "flex justify-between items-center" }, h("span", { className: "font-bold text-amber-300 text-sm" }, `${it.cost} BP`), Btn("Anfragen", () => requestShop(it, needsRoom ? rid : "", it.kind === "room" ? sid : ""), btnPrimary, { disabled: b.bp < it.cost || (needsRoom && !rid) })));
+        }))));
+  };
+  const renderBastionDm = () => {
+    const b = bastion; const [tab, tabs] = SubTabs("bdTab", "turn", [["turn", "Zug & Ereignisse"], ["rooms", "Einrichtungen"], ["shop", "Shop & Anfragen"]]);
+    const roomOpts = b.rooms.map((r) => [r.id, r.name]);
+    return h("div", { className: panelBox }, Head(Castle, "Bastions-Spielleitung", `Runde ${b.turn} · ${b.bp} BP`), tabs,
+      tab === "turn" && h("div", { className: "space-y-4" },
+        h("div", { className: "flex flex-wrap gap-2 items-center" }, Btn("Neue Bastions-Runde auslösen", runBastionRound, btnPrimary), Btn("Bastions-Ereignis würfeln", rollBastionEvent), Chk("Befehle brauchen DM-Freigabe", b.requireApproval, (v) => bUp((x) => ({ ...x, requireApproval: v })))),
+        h("div", { className: "flex flex-wrap items-center gap-1.5" }, h("span", { className: "text-sm text-amber-300 font-bold mr-2" }, `${b.bp} BP`), [-5, -1, 1, 5].map((n) => h("span", { key: n }, Btn(n > 0 ? `+${n}` : `${n}`, () => bUp((x) => ({ ...x, bp: Math.max(0, x.bp + n) })))))),
+        h("div", { className: sub }, lbl("Befehle für den nächsten Zug"),
+          b.rooms.filter((r) => b.commands[r.id]).map((r) => { const c = b.commands[r.id]; return h("div", { key: r.id, className: "flex flex-wrap items-center justify-between gap-2 text-xs text-slate-200" }, h("span", null, `${r.name}: ${CMDS[c.cmd]} – ${cname(c.charId)}${c.note ? ` (${c.note})` : ""}`), c.status === "pending" ? h("span", { className: "flex gap-1.5" }, Btn("Genehmigen", () => bUp((x) => ({ ...x, commands: { ...x.commands, [r.id]: { ...c, status: "approved" } } }))), Btn("Ablehnen", () => bUp((x) => { const cc = { ...x.commands }; delete cc[r.id]; return { ...x, commands: cc }; }), btnDanger)) : Tag("freigegeben", "border-emerald-600/50 bg-emerald-950/40 text-emerald-300")); }),
+          !b.rooms.some((r) => b.commands[r.id]) && h("div", { className: "text-xs text-slate-500" }, "Noch keine Befehle eingereicht.")),
+        eventList(b)),
+      tab === "rooms" && h("div", { className: "space-y-4" },
+        h("div", { className: sub }, lbl("Neue Bastion (z. B. Luftschiff)"), h("div", { className: "flex flex-wrap gap-2" }, TI("nsName", "Name"), Sel(uv("nsKind", "Luftschiff"), SITE_KINDS.map((k) => [k, k]), (v) => su("nsKind", v)), Btn("Anlegen", () => { if (!uv("nsName").trim()) return; bUp((x) => ({ ...x, sites: [...x.sites, { id: uid("site"), name: uv("nsName").trim(), kind: uv("nsKind", "Luftschiff") }] })); su("nsName", ""); }, btnPrimary))),
+        h("div", { className: sub }, lbl("Neue Einrichtung"), h("div", { className: "flex flex-wrap gap-2" }, TI("nrName", "Name (z. B. Schmiede)"), Sel(uv("nrType", "Special"), [["Special", "Spezial"], ["Basic", "Basis"]], (v) => su("nrType", v)), Sel(uv("nrSite", b.sites[0].id), b.sites.map((s) => [s.id, s.name]), (v) => su("nrSite", v)), Sel(uv("nrOwner", ""), [["", "— Besitzer —"], ...pcs.map((c) => [c.id, c.name])], (v) => su("nrOwner", v)), Btn("Anlegen", () => { if (!uv("nrName").trim()) return; bUp((x) => ({ ...x, rooms: [...x.rooms, { id: uid("room"), name: uv("nrName").trim(), type: uv("nrType", "Special"), level: 1, defenders: 0, status: "Untätig", productionProgress: 0, ownerId: uv("nrOwner", ""), siteId: uv("nrSite", x.sites[0].id), turnsNeeded: 2 }] })); su("nrName", ""); }, btnPrimary))),
+        b.rooms.map((r) => h("div", { key: r.id, className: sub }, h("div", { className: "flex flex-wrap items-center gap-2" },
+          Fld("rn" + r.id, r.name, (v) => updRoom(r.id, { name: v }), { cls: `${inp} w-40` }),
+          Btn("Stufe −", () => updRoom(r.id, { level: Math.max(1, (r.level || 1) - 1) })), Tag(`Stufe ${r.level}`), Btn("Stufe +", () => updRoom(r.id, { level: Math.min(5, (r.level || 1) + 1) })),
+          Btn("−", () => updRoom(r.id, { defenders: Math.max(0, (r.defenders || 0) - 1) })), Tag(`${r.defenders || 0} Verteidiger`), Btn("+", () => updRoom(r.id, { defenders: (r.defenders || 0) + 1 })),
+          Fld("rs" + r.id, r.status, (v) => updRoom(r.id, { status: v }), { cls: `${inp} w-32` }),
+          Fld("rp" + r.id, String(r.productionProgress || 0), (v) => updRoom(r.id, { productionProgress: clamp(num(v), 0, 100) }), { cls: `${inp} w-16`, type: "number" }), lbl("% Fortschritt"),
+          Sel(r.ownerId || "", [["", "— kein Besitzer —"], ...pcs.map((c) => [c.id, c.name])], (v) => updRoom(r.id, { ownerId: v })),
+          Sel(siteOf(b, r), b.sites.map((s) => [s.id, s.name]), (v) => updRoom(r.id, { siteId: v })),
+          Btn("Löschen", () => { if (window.confirm(`Einrichtung „${r.name}“ löschen?`)) bUp((x) => ({ ...x, rooms: x.rooms.filter((q) => q.id !== r.id), defendersList: x.defendersList.filter((d) => d.roomId !== r.id) })); }, btnDanger)))),
+        h("div", { className: sub }, lbl("Benannte Verteidiger / Spezialisten"), h("div", { className: "flex flex-wrap gap-2" }, TI("ndName", "Name"), Sel(uv("ndRoom", (b.rooms[0] || {}).id || ""), roomOpts, (v) => su("ndRoom", v)), Btn("Hinzufügen", () => { if (!uv("ndName").trim() || !b.rooms.length) return; bUp((x) => ({ ...x, defendersList: [...x.defendersList, { id: uid("def"), name: uv("ndName").trim(), roomId: uv("ndRoom", x.rooms[0].id) }] })); su("ndName", ""); }, btnPrimary)),
+          b.defendersList.map((d) => h("div", { key: d.id, className: "flex justify-between text-xs text-slate-300" }, h("span", null, `${d.name} – ${(b.rooms.find((r) => r.id === d.roomId) || {}).name || "?"}`), Btn("✕", () => bUp((x) => ({ ...x, defendersList: x.defendersList.filter((q) => q.id !== d.id) })), btnDanger))))),
+      tab === "shop" && h("div", { className: "space-y-4" },
+        h("div", { className: sub }, lbl("Offene Shop-Anfragen"), b.requests.map((q) => h("div", { key: q.id, className: "flex flex-wrap items-center justify-between gap-2 text-xs text-slate-200" }, h("span", null, `${q.charName}: ${q.name} (${q.cost} BP)`), h("span", { className: "flex gap-1.5" }, Btn("Genehmigen", () => approveShop(q), btnPrimary), Btn("Ablehnen", () => bUp((x) => ({ ...x, requests: x.requests.filter((r) => r.id !== q.id) })), btnDanger)))), b.requests.length === 0 && h("div", { className: "text-xs text-slate-500" }, "Keine offenen Anfragen.")),
+        h("div", { className: sub }, lbl("Neuer Shop-Artikel"), h("div", { className: "flex flex-wrap gap-2" }, TI("nsiName", "Name"), Sel(uv("nsiKind", "room"), Object.entries(KIND_LABEL), (v) => su("nsiKind", v)), TI("nsiCost", "BP", `${inp} w-20`), TI("nsiDesc", "Beschreibung", `${inp} flex-1 min-w-[10rem]`), uv("nsiKind", "room") === "site" && Sel(uv("nsiSite", "Luftschiff"), SITE_KINDS.map((k) => [k, k]), (v) => su("nsiSite", v)), Btn("Hinzufügen", () => { if (!uv("nsiName").trim()) return; const kind = uv("nsiKind", "room"); bUp((x) => ({ ...x, shop: [...x.shop, { id: uid("bs"), kind, name: uv("nsiName").trim(), cost: Math.max(0, num(uv("nsiCost"))), desc: uv("nsiDesc"), roomType: "Special", level: 1, siteKind: uv("nsiSite", "Luftschiff") }] })); setUi((p) => ({ ...p, nsiName: "", nsiCost: "", nsiDesc: "" })); }, btnPrimary))),
+        h("div", { className: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3" }, b.shop.map((it) => h("div", { key: it.id, className: sub }, h("div", { className: "flex justify-between gap-2" }, h("span", { className: "font-semibold text-sm text-white" }, it.name), Tag(KIND_LABEL[it.kind] || it.kind)), h("p", { className: "text-xs text-slate-400" }, it.desc),
+          h("div", { className: "flex items-center gap-2" }, Fld("sc" + it.id, String(it.cost), (v) => bUp((x) => ({ ...x, shop: x.shop.map((s) => s.id === it.id ? { ...s, cost: Math.max(0, num(v)) } : s) })), { cls: `${inp} w-20`, type: "number" }), lbl("BP"), Btn("Entfernen", () => bUp((x) => ({ ...x, shop: x.shop.filter((s) => s.id !== it.id) })), btnDanger)))))));
+  };
+
+  // ---------- RUF & FRAKTIONEN ----------
+  const fUp = (id, fn) => setFactions((p) => A(p).map((f) => f.id === id ? fn(f) : f));
+  const renderFactions = () => {
+    const list = dm ? factions : factions.filter((f) => !f.hidden);
+    const tabName = (id) => (shopTabs.find((t) => t.id === id) || {}).name || id;
+    return h("div", { className: panelBox }, Head(Flag, "Ruf & Fraktionen", dm ? "DM: Fraktionen, Renown & Händler-Verknüpfung" : `Dein Ansehen${me ? " – " + me.name : ""}`),
+      dm && h("div", { className: sub }, lbl("Neue Fraktion"), h("div", { className: "flex flex-wrap gap-2" }, TI("nfName", "Name"), Sel(uv("nfCat", "Gilde"), FACTION_CATS.map((k) => [k, k]), (v) => su("nfCat", v)), Btn("Anlegen", () => { if (!uv("nfName").trim()) return; setFactions((p) => [...A(p), { id: uid("fac"), name: uv("nfName").trim(), category: uv("nfCat", "Gilde"), description: "", renown: 0, hidden: false, privileges: "", notes: "", secretNotes: "", charRenown: {}, shopTabIds: [] }]); su("nfName", ""); }, btnPrimary))),
+      list.length === 0 && h("p", { className: "text-sm text-slate-500" }, "Noch keine Fraktionen bekannt."),
+      h("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-4" }, list.map((f) => {
+        const e = dm ? (parseInt(f.renown, 10) || 0) : effRenown(f, meId); const [rk, rc] = rankOf(e);
+        const links = A(f.shopTabIds);
+        return h("div", { key: f.id, className: sub },
+          h("div", { className: "flex justify-between items-start gap-2" }, dm ? Fld("fn" + f.id, f.name, (v) => fUp(f.id, (x) => ({ ...x, name: v })), { cls: `${inp} w-44 font-bold` }) : h("span", { className: "font-bold text-white" }, f.name), h("span", { className: "flex gap-1" }, f.hidden && Tag("geheim", "border-red-700/50 bg-red-950/40 text-red-300"), dm ? Sel(f.category, FACTION_CATS.map((k) => [k, k]), (v) => fUp(f.id, (x) => ({ ...x, category: v }))) : Tag(f.category))),
+          h("div", { className: "flex justify-between text-xs" }, h("span", { className: `${rc} font-bold` }, rk), h("span", { className: "text-slate-400" }, `${e > 0 ? "+" : ""}${e}${dm ? " (Gruppe)" : ""}`)),
+          h("div", { className: "h-2.5 rounded-full bg-slate-800 overflow-hidden relative" }, h("div", { className: `h-full ${e <= -50 ? "bg-red-500" : e < 0 ? "bg-orange-400" : e < 50 ? "bg-emerald-500" : "bg-amber-400"}`, style: { width: `${(e + 100) / 2}%` } }), [25, 50, 75].map((p) => h("div", { key: p, className: "absolute inset-y-0 w-px bg-slate-500/70", style: { left: `${p}%` } }))),
+          !dm && h("p", { className: "text-xs text-slate-300" }, f.description),
+          !dm && f.privileges && (e >= 50 ? h("div", { className: "text-xs text-emerald-300" }, `Privilegien: ${f.privileges}`) : h("div", { className: "text-[11px] text-slate-500" }, "Privilegien ab Ruf +50")),
+          !dm && links.length > 0 && h("div", { className: `text-xs ${e <= -50 ? "text-red-300" : e >= 50 ? "text-emerald-300" : "text-slate-500"}` }, e <= -50 ? `Händler (${links.map(tabName).join(", ")}) verweigern den Handel – Wachen werden alarmiert!` : e >= 50 ? `${e >= 80 ? 15 : 10} % Rabatt bei: ${links.map(tabName).join(", ")}` : `Händler: ${links.map(tabName).join(", ")} (Rabatt ab +50)`),
+          dm && h("div", { className: "space-y-2" },
+            Fld("fd" + f.id, f.description, (v) => fUp(f.id, (x) => ({ ...x, description: v })), { ph: "Beschreibung (öffentlich)", area: true }),
+            h("div", { className: "flex flex-wrap items-center gap-1.5" }, lbl("Gruppe:"), [-10, -5, -1, 1, 5, 10].map((n) => h("span", { key: n }, Btn(n > 0 ? `+${n}` : `${n}`, () => fUp(f.id, (x) => ({ ...x, renown: clamp((parseInt(x.renown, 10) || 0) + n, -100, 100) })))))),
+            h("div", { className: "flex flex-wrap items-center gap-1.5" }, Sel(uv("fc_" + f.id, (pcs[0] || {}).id || ""), pcs.map((c) => [c.id, c.name]), (v) => su("fc_" + f.id, v)), [-10, -5, 5, 10].map((n) => h("span", { key: n }, Btn(n > 0 ? `+${n}` : `${n}`, () => { const cid = uv("fc_" + f.id, (pcs[0] || {}).id || ""); if (cid) fUp(f.id, (x) => ({ ...x, charRenown: { ...(x.charRenown || {}), [cid]: clamp(((x.charRenown || {})[cid] || 0) + n, -100, 100) } })); })))),
+            Object.keys(f.charRenown || {}).length > 0 && h("div", { className: "text-[11px] text-slate-400" }, "Individuell: " + Object.entries(f.charRenown).map(([cid, v]) => `${cname(cid)} ${v > 0 ? "+" : ""}${v}`).join(" · ")),
+            Fld("fp" + f.id, f.privileges, (v) => fUp(f.id, (x) => ({ ...x, privileges: v })), { ph: "Fraktions-Privilegien", area: true }),
+            Fld("fo" + f.id, f.notes, (v) => fUp(f.id, (x) => ({ ...x, notes: v })), { ph: "Diplomatische Notizen (nur DM)", area: true }),
+            h("div", { className: "border border-amber-700/40 rounded-lg p-2 bg-amber-950/10" }, lbl("Geheimnotizen (nur DM)"), Fld("fs" + f.id, f.secretNotes, (v) => fUp(f.id, (x) => ({ ...x, secretNotes: v })), { area: true })),
+            h("div", { className: "flex flex-wrap gap-3" }, lbl("Händler-Reiter:"), shopTabs.map((t) => h("span", { key: t.id }, Chk(t.name, links.includes(t.id), (on) => fUp(f.id, (x) => ({ ...x, shopTabIds: on ? [...A(x.shopTabIds), t.id] : A(x.shopTabIds).filter((i) => i !== t.id) })))))),
+            h("div", { className: "flex gap-2" }, Btn(f.hidden ? "Für Spieler zeigen" : "Vor Spielern verbergen", () => fUp(f.id, (x) => ({ ...x, hidden: !x.hidden }))), Btn("Löschen", () => { if (window.confirm(`Fraktion „${f.name}“ löschen?`)) setFactions((p) => A(p).filter((x) => x.id !== f.id)); }, btnDanger))));
+      })));
+  };
+
+  // ---------- QUESTS, GERÜCHTE & KALENDER ----------
+  const qUp = (id, p) => setQuests((q) => A(q).map((x) => x.id === id ? { ...x, ...p } : x));
+  const advanceDays = (n, grant) => {
+    let { day, month, year } = cal; day += n;
+    while (day > 30) { day -= 30; month++; if (month > 11) { month = 0; year++; } }
+    const wc = (cal.weekCounter || 0) + n;
+    setCM({ currentDate: `${day}. ${MONTHS[month]}, ${year} TZ`, calendar: { ...cal, day, month, year, totalDays: (cal.totalDays || 0) + n, weekCounter: wc % 7, weekReminder: wc >= 7 || cal.weekReminder } });
+    if (grant) setCharacters((p) => p.map((c) => c.isParty ? c : { ...c, downtimeDays: (c.downtimeDays || 0) + n }));
+    notify(`+${n} Tag${n > 1 ? "e" : ""} vergangen${wc >= 7 ? " – 7-Tage-Erinnerung aktiv!" : ""}`);
+  };
+  const collectUpkeep = () => {
+    const changes = pcs.map((c) => { const ls = LIFESTYLES.find((l) => l.id === c.lifestyle) || LIFESTYLES[1]; const cost = standard === "silver" ? ls.silverCostCp : ls.goldCostCp; return { charId: c.id, deltaCp: Math.min(getTotalCopper(c.coins), cost) }; });
+    const total = changes.reduce((s, x) => s + x.deltaCp, 0);
+    setCharacters((p) => p.map((c) => { const ch = changes.find((x) => x.charId === c.id); return ch ? { ...c, coins: copperToCoins(getTotalCopper(c.coins) - ch.deltaCp) } : c; }));
+    addLog("Gruppe", "expense", "Lebenshaltung (1 Woche)", `-${formatCurrency(total, standard)}`, "DM", { kind: "multi", changes });
+    notify(`Lebenshaltung eingezogen: ${formatCurrency(total, standard)}`);
+  };
+  const questCard = (q) => h("div", { key: q.id, className: sub },
+    h("div", { className: "flex justify-between gap-2" }, h("span", { className: "font-semibold text-sm text-white" }, q.title), Tag(q.status, q.status === "Aktiv" ? "border-emerald-600/50 bg-emerald-950/40 text-emerald-300" : q.status === "Erledigt" ? undefined : "border-red-700/50 bg-red-950/40 text-red-300")),
+    (q.giver || q.location) && h("div", { className: "text-[11px] text-slate-400" }, [q.giver && `Auftraggeber: ${q.giver}`, q.location && `Ort: ${q.location}`].filter(Boolean).join(" · ")),
+    q.publicNotes && h("p", { className: "text-xs text-slate-300" }, q.publicNotes), q.rewardPreview && h("div", { className: "text-xs text-amber-300" }, `Belohnung: ${q.rewardPreview}`));
+  const renderQuests = () => {
+    const vis = dm ? A(quests) : A(quests).filter((q) => q.visible);
+    const col = (title, cat) => h("div", { className: "space-y-2" }, h("div", { className: "text-xs font-bold uppercase tracking-wider text-slate-400" }, title), vis.filter((q) => q.category === cat).map(questCard), !vis.some((q) => q.category === cat) && h("div", { className: "text-xs text-slate-600" }, "—"));
+    return h("div", { className: panelBox }, Head(ScrollText, "Quest Log", `Ingame-Datum: ${cm.currentDate} · ${cal.timeOfDay}`),
+      dm ? h("div", { className: "space-y-4" },
+        h("div", { className: sub }, lbl("Ingame-Kalender (30-Tage-Monate)"),
+          h("div", { className: "flex flex-wrap items-center gap-2" }, h("span", { className: "text-sm font-bold text-amber-200" }, `${cal.day}. ${MONTHS[cal.month]}, ${cal.year} TZ`), Tag(`${cal.weekCounter || 0}/7 bis Wochenwechsel`), Tag(`Tag ${cal.totalDays || 0} der Kampagne`)),
+          h("div", { className: "flex flex-wrap items-center gap-2" }, Btn("+1 Tag", () => advanceDays(1, false), btnPrimary), Btn("+1 Woche (Downtime)", () => advanceDays(7, uv("grantDt", true)), btnPrimary), Chk("7 Downtime-Tage an alle Spieler vergeben", uv("grantDt", true), (v) => su("grantDt", v)), Sel(cal.timeOfDay, ["Morgen", "Mittag", "Abend", "Nacht"].map((k) => [k, k]), (v) => setCM({ calendar: { ...cal, timeOfDay: v } }))),
+          h("div", { className: "flex flex-wrap items-center gap-2" }, lbl("Datum setzen:"), Fld("cd" + cal.day, String(cal.day), (v) => setCM({ currentDate: `${clamp(num(v), 1, 30)}. ${MONTHS[cal.month]}, ${cal.year} TZ`, calendar: { ...cal, day: clamp(num(v), 1, 30) } }), { cls: `${inp} w-16`, type: "number" }), Sel(String(cal.month), MONTHS.map((m, i) => [String(i), m]), (v) => setCM({ currentDate: `${cal.day}. ${MONTHS[num(v)]}, ${cal.year} TZ`, calendar: { ...cal, month: num(v) } })), Fld("cy" + cal.year, String(cal.year), (v) => setCM({ currentDate: `${cal.day}. ${MONTHS[cal.month]}, ${num(v)} TZ`, calendar: { ...cal, year: num(v) } }), { cls: `${inp} w-20`, type: "number" }))),
+        h("div", { className: sub }, lbl("Neue Quest / neues Gerücht"), h("div", { className: "flex flex-wrap gap-2" }, TI("nqTitle", "Titel"), Sel(uv("nqCat", "Hauptquest"), Q_CATS.map((k) => [k, k]), (v) => su("nqCat", v)), TI("nqGiver", "Auftraggeber"), TI("nqLoc", "Ort"), TI("nqRew", "Belohnungsvorschau"), Btn("Anlegen", () => { if (!uv("nqTitle").trim()) return; setQuests((q) => [...A(q), { id: uid("q"), title: uv("nqTitle").trim(), category: uv("nqCat", "Hauptquest"), status: "Aktiv", giver: uv("nqGiver"), location: uv("nqLoc"), rewardPreview: uv("nqRew"), publicNotes: "", dmSecrets: "", visible: false }]); setUi((p) => ({ ...p, nqTitle: "", nqGiver: "", nqLoc: "", nqRew: "" })); }, btnPrimary))),
+        h("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-3" }, vis.map((q) => h("div", { key: q.id, className: sub },
+          h("div", { className: "flex flex-wrap items-center gap-2" }, Fld("qt" + q.id, q.title, (v) => qUp(q.id, { title: v }), { cls: `${inp} flex-1` }), Sel(q.category, Q_CATS.map((k) => [k, k]), (v) => qUp(q.id, { category: v })), Sel(q.status, Q_STATES.map((k) => [k, k]), (v) => qUp(q.id, { status: v }))),
+          h("div", { className: "flex flex-wrap gap-2" }, Fld("qg" + q.id, q.giver || "", (v) => qUp(q.id, { giver: v }), { cls: `${inp} w-36`, ph: "Auftraggeber" }), Fld("ql" + q.id, q.location || "", (v) => qUp(q.id, { location: v }), { cls: `${inp} w-36`, ph: "Ort" }), Fld("qr" + q.id, q.rewardPreview || "", (v) => qUp(q.id, { rewardPreview: v }), { cls: `${inp} flex-1`, ph: "Belohnung" })),
+          Fld("qn" + q.id, q.publicNotes || "", (v) => qUp(q.id, { publicNotes: v }), { ph: "Öffentliche Notizen", area: true }),
+          h("div", { className: "border border-amber-700/40 rounded-lg p-2 bg-amber-950/10" }, lbl("DM-Geheimnisse"), Fld("qs" + q.id, q.dmSecrets || "", (v) => qUp(q.id, { dmSecrets: v }), { area: true })),
+          h("div", { className: "flex gap-2" }, Btn(q.visible ? "Vor Spielern verbergen" : "Für Spieler freigeben", () => qUp(q.id, { visible: !q.visible }), q.visible ? btnGhost : btnPrimary), Btn("Löschen", () => setQuests((x) => A(x).filter((y) => y.id !== q.id)), btnDanger)))))) : null,
+      !dm && h("div", { className: "grid grid-cols-1 lg:grid-cols-3 gap-4" }, col("Hauptquests", "Hauptquest"), col("Nebenquests", "Fraktionsauftrag"), col("Tavernen-Gerüchte", "Gerücht")),
+      h("div", { className: sub }, lbl("Gemeinsames Notizfeld der Gruppe (speichert beim Verlassen des Feldes)"), Fld("shared", cm.sharedNotes, (v) => setCM({ sharedNotes: v }), { area: true, rows: 6, ph: "Eigene Ermittlungen, Spuren, Theorien …" })));
+  };
+
+  // ---------- NPC- & ORTSLEXIKON ----------
+  const lxUp = (kind, id, p) => setLexicon((l) => { const n = SYNC_NORMALIZERS.lexicon(l); return { ...n, [kind]: n[kind].map((x) => x.id === id ? { ...x, ...p } : x) }; });
+  const lxAdd = (kind, obj) => setLexicon((l) => { const n = SYNC_NORMALIZERS.lexicon(l); return { ...n, [kind]: [...n[kind], obj] }; });
+  const lxDel = (kind, id) => setLexicon((l) => { const n = SYNC_NORMALIZERS.lexicon(l); return { ...n, [kind]: n[kind].filter((x) => x.id !== id) }; });
+  const renderLore = () => {
+    const lx = SYNC_NORMALIZERS.lexicon(lexicon); const q = uv("lxSearch").toLowerCase();
+    const match = (x) => !q || JSON.stringify([x.name, x.role, x.region, x.location, x.publicDesc]).toLowerCase().includes(q);
+    const npcs = lx.npcs.filter((n) => (dm || n.visible) && match(n)); const locs = lx.locations.filter((n) => (dm || n.visible) && match(n));
+    const fName = (id) => { const f = factions.find((x) => x.id === id); return f && (dm || !f.hidden) ? f.name : ""; };
+    const noteKey = (id) => `${id}__${meId}`;
+    const myNote = (x) => !dm && h("div", null, lbl("Deine Notiz (gepinnt)"), Fld("pn" + x.id, lx.notes[noteKey(x.id)] || "", (v) => setLexicon((l) => { const n = SYNC_NORMALIZERS.lexicon(l); return { ...n, notes: { ...n.notes, [noteKey(x.id)]: v } }; }), { ph: "z. B. Schuldet uns noch einen Gefallen" }));
+    const dmBox = (kind, x) => dm && h("div", { className: "space-y-2" },
+      h("div", { className: "border border-amber-700/40 rounded-lg p-2 bg-amber-950/10" }, lbl("DM-Geheimnis (nur in der DM-Zentrale sichtbar)"), Fld("ds" + x.id, x.dmSecret || "", (v) => lxUp(kind, x.id, { dmSecret: v }), { area: true })),
+      h("div", { className: "flex flex-wrap gap-2" }, Btn(x.visible ? "👁 Für Spieler sichtbar" : "Für Spieler verborgen", () => lxUp(kind, x.id, { visible: !x.visible }), x.visible ? btnPrimary : btnGhost), Btn("Löschen", () => lxDel(kind, x.id), btnDanger)));
+    const npcCard = (n) => h("div", { key: n.id, className: sub },
+      h("div", { className: "flex justify-between gap-2" }, dm ? Fld("nn" + n.id, n.name, (v) => lxUp("npcs", n.id, { name: v }), { cls: `${inp} font-bold` }) : h("span", { className: "font-bold text-white" }, n.name), n.status && Tag(n.status)),
+      dm ? h("div", { className: "flex flex-wrap gap-2" }, Fld("nr" + n.id, n.role || "", (v) => lxUp("npcs", n.id, { role: v }), { cls: `${inp} w-32`, ph: "Beruf/Rolle" }), Fld("nst" + n.id, n.status || "", (v) => lxUp("npcs", n.id, { status: v }), { cls: `${inp} w-24`, ph: "Status" }), Sel(n.factionId || "", [["", "— Fraktion —"], ...factions.map((f) => [f.id, f.name])], (v) => lxUp("npcs", n.id, { factionId: v })), Sel(n.location || "", [["", "— Ort —"], ...lx.locations.map((l) => [l.name, l.name])], (v) => lxUp("npcs", n.id, { location: v })))
+        : h("div", { className: "text-xs text-slate-400" }, [n.role, n.location && `wohnt/zu finden: ${n.location}`, fName(n.factionId) && `Fraktion: ${fName(n.factionId)}`].filter(Boolean).join(" · ")),
+      dm ? Fld("np" + n.id, n.publicDesc || "", (v) => lxUp("npcs", n.id, { publicDesc: v }), { ph: "Öffentliche Beschreibung", area: true }) : h("p", { className: "text-xs text-slate-300" }, n.publicDesc),
+      dm && h("div", { className: "flex flex-wrap gap-2 items-center" }, lbl("Quests:"), A(quests).map((qq) => h("span", { key: qq.id }, Chk(qq.title, A(n.questIds).includes(qq.id), (on) => lxUp("npcs", n.id, { questIds: on ? [...A(n.questIds), qq.id] : A(n.questIds).filter((i) => i !== qq.id) }))))),
+      !dm && A(n.questIds).length > 0 && h("div", { className: "text-[11px] text-cyan-300" }, "Quests: " + A(n.questIds).map((i) => (A(quests).find((x) => x.id === i && x.visible) || {}).title).filter(Boolean).join(", ")),
+      myNote(n), dmBox("npcs", n));
+    const locCard = (l) => h("div", { key: l.id, className: sub },
+      dm ? h("div", { className: "flex flex-wrap gap-2" }, Fld("ln" + l.id, l.name, (v) => lxUp("locations", l.id, { name: v }), { cls: `${inp} font-bold` }), Fld("lr" + l.id, l.region || "", (v) => lxUp("locations", l.id, { region: v }), { cls: `${inp} w-32`, ph: "Region" })) : h("div", { className: "flex justify-between" }, h("span", { className: "font-bold text-white" }, l.name), l.region && Tag(l.region)),
+      dm ? Fld("lp" + l.id, l.publicDesc || "", (v) => lxUp("locations", l.id, { publicDesc: v }), { ph: "Öffentliche Beschreibung", area: true }) : h("p", { className: "text-xs text-slate-300" }, l.publicDesc),
+      lx.npcs.filter((n) => n.location === l.name && (dm || n.visible)).length > 0 && h("div", { className: "text-[11px] text-slate-400" }, "Bekannte NPCs: " + lx.npcs.filter((n) => n.location === l.name && (dm || n.visible)).map((n) => n.name).join(", ")),
+      myNote(l), dmBox("locations", l));
+    return h("div", { className: panelBox }, Head(BookOpen, "NPC- & Ortslexikon", dm ? "DM: anlegen, freigeben, Geheimnisse pflegen" : "Bekannte Persönlichkeiten und besuchte Orte"),
+      h("input", { className: ta, placeholder: "Durchsuchen (Name, Beruf, Region, Ort …)", value: uv("lxSearch"), onChange: (e) => su("lxSearch", e.target.value) }),
+      dm && h("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-3" },
+        h("div", { className: sub }, lbl("Neuer NPC"), h("div", { className: "flex flex-wrap gap-2" }, TI("nnName", "Name"), TI("nnRole", "Beruf/Rolle"), Btn("Anlegen", () => { if (!uv("nnName").trim()) return; lxAdd("npcs", { id: uid("npc"), name: uv("nnName").trim(), role: uv("nnRole"), factionId: "", location: "", status: "lebt", publicDesc: "", dmSecret: "", visible: false, questIds: [] }); setUi((p) => ({ ...p, nnName: "", nnRole: "" })); }, btnPrimary))),
+        h("div", { className: sub }, lbl("Neuer Ort"), h("div", { className: "flex flex-wrap gap-2" }, TI("nlName", "Name"), TI("nlReg", "Region"), Btn("Anlegen", () => { if (!uv("nlName").trim()) return; lxAdd("locations", { id: uid("loc"), name: uv("nlName").trim(), region: uv("nlReg"), publicDesc: "", dmSecret: "", visible: false }); setUi((p) => ({ ...p, nlName: "", nlReg: "" })); }, btnPrimary)))),
+      h("div", { className: "text-xs font-bold uppercase tracking-wider text-slate-400" }, `NPCs (${npcs.length})`), h("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-3" }, npcs.map(npcCard)),
+      h("div", { className: "text-xs font-bold uppercase tracking-wider text-slate-400" }, `Orte (${locs.length})`), h("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-3" }, locs.map(locCard)));
+  };
+
+  // ---------- DOWNTIME & CRAFTING ----------
+  const pUp = (id, p) => setCraftingProjects((l) => A(l).map((x) => x.id === id ? { ...x, ...p } : x));
+  const dtOf = (id) => (characters.find((c) => c.id === id) || {}).downtimeDays || 0;
+  const giveDt = (ids, n) => { if (n <= 0) return; setCharacters((p) => p.map((c) => ids.includes(c.id) ? { ...c, downtimeDays: (c.downtimeDays || 0) + n } : c)); notify(`${n} Downtime-Tage vergeben.`); };
+  const startProject = () => {
+    const rec = cm.recipes.find((r) => r.id === uv("dtRecipe"));
+    const name = (uv("dtName") || (rec && rec.name) || "").trim(); const cost = num(uv("dtCost")) || (rec ? rec.costGp : 0);
+    if (!name || cost <= 0) { notify("Name und Gesamtkosten (GM) angeben.", "error"); return; }
+    setCraftingProjects((l) => [...A(l), { id: uid("cp"), charId: meId, itemName: name, totalCostGp: cost, progressCp: 0, daysInvested: 0, status: "Laufend", type: uv("dtType", rec ? rec.type : CRAFT_TYPES[0]), approved: false, dc: 0, gpPerDay: 10, pendingDays: 0 }]);
+    setUi((p) => ({ ...p, dtName: "", dtCost: "", dtRecipe: "" })); notify("Projekt beim DM angemeldet.");
+  };
+  const investDays = (p) => {
+    const n = clamp(num(uv("inv_" + p.id, "1")), 1, dtOf(meId));
+    if (dtOf(meId) < 1) { notify("Keine Downtime-Tage übrig.", "error"); return; }
+    setCharacters((l) => l.map((c) => c.id === meId ? { ...c, downtimeDays: Math.max(0, (c.downtimeDays || 0) - n) } : c));
+    pUp(p.id, { pendingDays: (p.pendingDays || 0) + n }); notify(`${n} Tage zur Absegnung eingereicht.`);
+  };
+  const approveDays = (p) => {
+    const n = p.pendingDays || 0; const prog = Math.min(p.totalCostGp * 100, (p.progressCp || 0) + n * (p.gpPerDay || 10) * 100); const done = prog >= p.totalCostGp * 100;
+    pUp(p.id, { pendingDays: 0, daysInvested: (p.daysInvested || 0) + n, progressCp: prog, status: done ? "Abgeschlossen" : "Laufend" });
+    addLog(cname(p.charId), "dm_event", `${done ? "Fertiggestellt" : "Fortschritt"}: ${p.itemName}`, `${n} Tage`, "DM"); notify(done ? `${p.itemName} ist fertig!` : "Fortschritt abgesegnet.");
+  };
+  const renderDowntime = () => {
+    const all = A(craftingProjects); const mine = all.filter((p) => p.charId === meId);
+    const card = (p) => { const pct = p.totalCostGp > 0 ? (p.progressCp || 0) / (p.totalCostGp * 100) * 100 : 0; const daysNeeded = Math.ceil(p.totalCostGp / (p.gpPerDay || 10));
+      return h("div", { key: p.id, className: sub },
+        h("div", { className: "flex justify-between gap-2" }, h("span", { className: "font-semibold text-sm text-white" }, p.itemName + (dm ? ` (${cname(p.charId)})` : "")), h("span", { className: "flex gap-1" }, Tag(p.type), Tag(p.status, p.status === "Abgeschlossen" ? "border-emerald-600/50 bg-emerald-950/40 text-emerald-300" : "border-amber-600/50 bg-amber-950/40 text-amber-300"), !p.approved && Tag("wartet auf DM", "border-red-700/50 bg-red-950/40 text-red-300"))),
+        h("div", { className: "text-[11px] text-slate-400" }, `Gold: ${Math.floor((p.progressCp || 0) / 100)} / ${p.totalCostGp} GM · Tage: ${p.daysInvested || 0} / ${daysNeeded} · ${p.gpPerDay || 10} GM/Tag${p.dc ? ` · SG ${p.dc}` : ""}${p.pendingDays ? ` · ${p.pendingDays} Tage zur Absegnung` : ""}`),
+        Bar(pct, "bg-amber-500"), Bar(daysNeeded > 0 ? (p.daysInvested || 0) / daysNeeded * 100 : 0, "bg-cyan-500"),
+        !dm && p.approved && p.status === "Laufend" && h("div", { className: "flex gap-2 items-center" }, h("input", { type: "number", min: "1", className: `${inp} w-16`, value: uv("inv_" + p.id, "1"), onChange: (e) => su("inv_" + p.id, e.target.value) }), Btn("Tage investieren", () => investDays(p), btnPrimary, { disabled: dtOf(meId) < 1 })),
+        dm && h("div", { className: "space-y-2" },
+          h("div", { className: "flex flex-wrap items-center gap-2" }, lbl("SG"), Fld("dc" + p.id, String(p.dc || 0), (v) => pUp(p.id, { dc: num(v) }), { cls: `${inp} w-16`, type: "number" }), lbl("GM/Tag"), Fld("gr" + p.id, String(p.gpPerDay || 10), (v) => pUp(p.id, { gpPerDay: Math.max(1, num(v)) }), { cls: `${inp} w-16`, type: "number" })),
+          h("div", { className: "flex flex-wrap gap-2" }, !p.approved && Btn("Projekt genehmigen", () => pUp(p.id, { approved: true }), btnPrimary), p.pendingDays > 0 && Btn(`${p.pendingDays} Tage absegnen`, () => approveDays(p), btnPrimary), p.pendingDays > 0 && Btn("Tage ablehnen (erstatten)", () => { setCharacters((l) => l.map((c) => c.id === p.charId ? { ...c, downtimeDays: (c.downtimeDays || 0) + p.pendingDays } : c)); pUp(p.id, { pendingDays: 0 }); }, btnDanger), Btn("Löschen", () => setCraftingProjects((l) => A(l).filter((x) => x.id !== p.id)), btnDanger)))); };
+    return h("div", { className: panelBox }, Head(Hammer, "Downtime & Crafting", dm ? "DM: Tage vergeben, Projekte prüfen, Rezepte pflegen" : `Deine Auszeit-Projekte – ${dtOf(meId)} Downtime-Tage verfügbar`),
+      dm && h("div", { className: "space-y-3" },
+        h("div", { className: sub }, lbl("Downtime-Tage vergeben"), h("div", { className: "flex flex-wrap items-center gap-2" }, Sel(uv("dgTarget", "all"), [["all", "Gesamte Gruppe"], ...pcs.map((c) => [c.id, `${c.name} (${c.downtimeDays || 0} Tage)`])], (v) => su("dgTarget", v)), TI("dgDays", "Tage", `${inp} w-20`), Btn("Vergeben", () => giveDt(uv("dgTarget", "all") === "all" ? pcs.map((c) => c.id) : [uv("dgTarget")], num(uv("dgDays"))), btnPrimary))),
+        h("div", { className: sub }, lbl("Rezepte & Voraussetzungen"), h("div", { className: "flex flex-wrap gap-2" }, TI("nrcName", "Gegenstand"), Sel(uv("nrcType", CRAFT_TYPES[0]), CRAFT_TYPES.map((k) => [k, k]), (v) => su("nrcType", v)), TI("nrcCost", "GM", `${inp} w-20`), TI("nrcReq", "Voraussetzung (z. B. Schmiedewerkzeug)"), Btn("Rezept anlegen", () => { if (!uv("nrcName").trim()) return; setCM({ recipes: [...cm.recipes, { id: uid("rc"), name: uv("nrcName").trim(), type: uv("nrcType", CRAFT_TYPES[0]), costGp: Math.max(1, num(uv("nrcCost"))), prereq: uv("nrcReq") }] }); setUi((p) => ({ ...p, nrcName: "", nrcCost: "", nrcReq: "" })); }, btnPrimary)),
+          cm.recipes.map((r) => h("div", { key: r.id, className: "flex justify-between text-xs text-slate-300" }, h("span", null, `${r.name} · ${r.type} · ${r.costGp} GM${r.prereq ? ` · ${r.prereq}` : ""}`), Btn("✕", () => setCM({ recipes: cm.recipes.filter((x) => x.id !== r.id) }), btnDanger))))),
+      !dm && h("div", { className: sub }, lbl("Neues Projekt / neue Auszeit-Aktivität anmelden"), h("div", { className: "flex flex-wrap gap-2" },
+        Sel(uv("dtRecipe", ""), [["", "— Rezept (optional) —"], ...cm.recipes.map((r) => [r.id, r.name])], (v) => { const r = cm.recipes.find((x) => x.id === v); setUi((p) => ({ ...p, dtRecipe: v, ...(r ? { dtName: r.name, dtCost: String(r.costGp), dtType: r.type } : {}) })); }),
+        TI("dtName", "Gegenstand / Ziel"), Sel(uv("dtType", CRAFT_TYPES[0]), CRAFT_TYPES.map((k) => [k, k]), (v) => su("dtType", v)), TI("dtCost", "Gesamtkosten (GM)", `${inp} w-32`), Btn("Anmelden", startProject, btnPrimary)),
+        (() => { const r = cm.recipes.find((x) => x.id === uv("dtRecipe")); return r && r.prereq ? h("div", { className: "text-[11px] text-amber-300" }, `Voraussetzung: ${r.prereq}`) : null; })()),
+      h("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-3" }, (dm ? all : mine).map(card)),
+      (dm ? all : mine).length === 0 && h("p", { className: "text-sm text-slate-500" }, "Keine Projekte vorhanden."));
+  };
+
+  const renderModule = (k) => k === "bastion" ? (dm ? renderBastionDm() : renderBastionPlayer()) : k === "factions" ? renderFactions() : k === "quests" ? renderQuests() : k === "lore" ? renderLore() : k === "downtime" ? renderDowntime() : renderPlaceholderModule(k);
+  const weekBanner = dm && cal.weekReminder && h("div", { className: "mb-4 bg-amber-950/40 border border-amber-500/50 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3" },
+    h("div", { className: "text-sm text-amber-200 font-semibold" }, "⏳ 7 Ingame-Tage sind vergangen – Lebenshaltungskosten einziehen oder Bastions-Runde auslösen?"),
+    h("div", { className: "flex flex-wrap gap-2" }, Btn("Lebenshaltung einziehen", collectUpkeep, btnPrimary), Btn("Bastions-Runde auslösen", runBastionRound, btnPrimary), Btn("Später", () => setCM({ calendar: { ...cal, weekReminder: false } }))));
+
   const renderPlaceholderModule = (moduleKey) => {
     const info = PLACEHOLDER_INFO[moduleKey];
     const tabMeta = CAMPAIGN_TABS.find((t) => t.id === moduleKey);
@@ -3443,12 +3834,13 @@ function App() {
     ),
 
     React.createElement("main", { className: "max-w-7xl mx-auto px-4 py-6" },
+      weekBanner,
       // A) DM Allgemeine Einstellungen
       isDm && mainSection === "__settings" ? renderDmGeneralSettings() :
       // B) Modul 1: Inventar, Traglast & Attunement (Spieler & DM)
       mainSection === "inventory" ? (isDm ? renderDmInventoryModule() : renderPlayerInventoryModule()) :
       // C) Die übrigen Kampagnen-Reiter (Bastion, Fraktionen, Quests, Lexikon, Downtime)
-      mainSection !== "finances" ? renderPlaceholderModule(mainSection) :
+      mainSection !== "finances" ? renderModule(mainSection) :
       // D) Reiter "Finanzen & Shops" – SPIELER-MODUS
       !isDm ? React.createElement("div", { className: "space-y-6" },
         React.createElement("div", { className: "bg-slate-900/80 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4" },
@@ -3582,9 +3974,3 @@ window.__appMounted = true;
     </script>
 </body>
 </html>
-'''
-
-with open("index.html", "w", encoding="utf-8") as f:
-    f.write(html_content)
-
-print("Erfolgreich gespeichert:", len(html_content.encode("utf-8")), "Bytes")
