@@ -56,7 +56,7 @@ const FIREBASE_CONFIG = {
 
 const FIREBASE_ROOT = "dnd55/state";
 const FIREBASE_ENABLED = !!FIREBASE_CONFIG.databaseURL;
-const SYNC_KEYS = ["characters", "shopTabs", "logs", "pendingRequests", "standard", "campaignMeta", "bagOfHolding", "bastion", "factions", "quests", "lexicon", "craftingProjects", "bastionModule"];
+const SYNC_KEYS = ["characters", "shopTabs", "logs", "pendingRequests", "standard", "campaignMeta", "bagOfHolding", "bastion", "factions", "quests", "lexicon", "craftingProjects", "bastionModule", "journal"];
 
 const normalizeInventoryItem = (it) => ({
   id: it.id || ("inv_" + Math.random().toString(36).slice(2, 8)),
@@ -162,16 +162,19 @@ const Trash2 = makeIcon("Trash2", "Trash");
 const Package = makeIcon("Package", "Box");
 const Zap = makeIcon("Zap", "BatteryCharging");
 const Eye = makeIcon("Eye");
+const Menu = makeIcon("Menu", "List");
+const ChevronDown = makeIcon("ChevronDown");
+const ChevronRight = makeIcon("ChevronRight");
 
 const CAMPAIGN_TABS = [
   { id: "finances", label: "Finanzen & Shops", Icon: Coins },
   { id: "inventory", label: "Inventar, Traglast & Attunement", Icon: Backpack },
-  { id: "bastion", label: "Unsere Bastion", Icon: Castle },
-  { id: "bastionen", label: "Bastionen", Icon: Shield },
+  { id: "bastionen", label: "Bastionen", Icon: Castle },
   { id: "factions", label: "Ruf & Fraktionen", Icon: Flag },
   { id: "quests", label: "Quest Log", Icon: ScrollText },
   { id: "lore", label: "NPC- & Ortslexikon", Icon: BookOpen },
-  { id: "downtime", label: "Downtime & Crafting", Icon: Hammer }
+  { id: "downtime", label: "Downtime & Crafting", Icon: Hammer },
+  { id: "journal", label: "Spielleiter-Protokoll", Icon: Eye, dmOnly: true }
 ];
 
 const PLACEHOLDER_INFO = {
@@ -679,7 +682,8 @@ Object.assign(SYNC_NORMALIZERS, {
   factions: (v) => A(v).filter((f) => !f.__empty).map((f) => ({ category: "Gilde", description: "", renown: 0, hidden: false, privileges: "", notes: "", secretNotes: "", ...f, charRenown: f.charRenown || {}, consequences: A(f.consequences), shopTabIds: A(f.shopTabIds) })),
   quests: (v) => A(v),
   lexicon: (v) => ({ npcs: A(v && v.npcs).map((n) => ({ ...n, questIds: A(n.questIds) })), locations: A(v && v.locations), notes: (v && v.notes) || {} }),
-  craftingProjects: (v) => A(v)
+  craftingProjects: (v) => A(v),
+  journal: (v) => A(v).filter(Boolean).map((e) => ({ ...e, details: A(e.details), ops: A(e.ops) })).sort((a, b) => (b.ts || 0) - (a.ts || 0))
 });
 const _cmNorm = SYNC_NORMALIZERS.campaignMeta;
 SYNC_NORMALIZERS.campaignMeta = (v) => {
@@ -726,9 +730,85 @@ SYNC_NORMALIZERS.bastionModule = (v) => {
   return {
     globalState: g, touched: tc,
     templates: { facilities: pick("facilities").map((f) => ({ ...f, levels: A(f.levels) })), units: pick("units"), craftables: pick("craftables"), shipWeapons: pick("shipWeapons"), events: pick("events") },
-    bastions: A(v.bastions).map((b) => ({ type: "fortress", tier: 1, maxSlots: 4, customBpBonus: 0, defenseBonus: 0, baseBpOverride: "", maxFacLevel: "", ...b, facilities: A(b.facilities), garrison: A(b.garrison), missions: A(b.missions), airshipStats: b.airshipStats ? { ...b.airshipStats, weapons: A(b.airshipStats.weapons) } : null }))
+    bastions: A(v.bastions).map((b) => ({ type: "fortress", tier: 1, maxSlots: 4, customBpBonus: 0, defenseBonus: 0, baseBpOverride: "", maxFacLevel: "", ...b, owners: A(b.owners), facilities: A(b.facilities), garrison: A(b.garrison), missions: A(b.missions), airshipStats: b.airshipStats ? { ...b.airshipStats, weapons: A(b.airshipStats.weapons) } : null }))
   };
 };
+
+// ===== SPIELLEITER-PROTOKOLL: Diff- & Undo-Helfer =====
+const JSLICE_NAMES = { characters: "Charaktere", shopTabs: "Shops", standard: "Währungsstandard", campaignMeta: "Kampagne", bagOfHolding: "Nimmervoller Beutel", bastion: "Bastion (alt)", factions: "Fraktionen", quests: "Quests", lexicon: "Lexikon", craftingProjects: "Crafting", bastionModule: "Bastionen", pendingRequests: "Anfragen" };
+const jId = (x) => x && typeof x === "object" && !Array.isArray(x) && x.id != null ? String(x.id) : null;
+const jName = (x) => { if (!x || typeof x !== "object") return String(x); const n = x.name || x.title || x.itemName || x.label || x.id; return String(n == null ? "?" : n); };
+const jShort = (v) => { if (v === undefined) return "–"; let s = typeof v === "string" ? v : JSON.stringify(v); if (s === undefined) s = "–"; return s.length > 60 ? s.slice(0, 57) + "…" : s; };
+const jPlain = (x) => x && typeof x === "object" && !Array.isArray(x);
+function jdiff(a, b, path, lbls, slice, out) {
+  if (a === b) return;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    const idMode = (a.length > 0 || b.length > 0) && a.every((x) => jId(x) !== null) && b.every((x) => jId(x) !== null);
+    if (idMode) {
+      const ma = new Map(a.map((x, i) => [jId(x), [x, i]])), mb = new Map(b.map((x, i) => [jId(x), [x, i]]));
+      ma.forEach(([x, i], id) => { if (!mb.has(id)) out.push({ k: "d", s: slice, p: JSON.stringify(path), b: JSON.stringify(x), i, l: lbls.join(" › "), d: "entfernt: " + jName(x) }); });
+      mb.forEach(([x, i], id) => { if (!ma.has(id)) out.push({ k: "a", s: slice, p: JSON.stringify(path), a: JSON.stringify(x), i, l: lbls.join(" › "), d: "hinzugefügt: " + jName(x) }); else jdiff(ma.get(id)[0], x, path.concat([{ id }]), lbls.concat([jName(x)]), slice, out); });
+      return;
+    }
+    if (JSON.stringify(a) !== JSON.stringify(b)) out.push({ k: "s", s: slice, p: JSON.stringify(path), b: JSON.stringify(a), a: JSON.stringify(b), l: lbls.join(" › "), d: jShort(a) + " → " + jShort(b) });
+    return;
+  }
+  if (jPlain(a) && jPlain(b)) {
+    new Set([...Object.keys(a), ...Object.keys(b)]).forEach((k) => {
+      const x = a[k], y = b[k];
+      if (x === undefined && y === undefined) return;
+      if (x === undefined || y === undefined) { out.push({ k: "s", s: slice, p: JSON.stringify(path.concat([k])), b: x === undefined ? undefined : JSON.stringify(x), a: y === undefined ? undefined : JSON.stringify(y), l: lbls.concat([k]).join(" › "), d: jShort(x) + " → " + jShort(y) }); return; }
+      jdiff(x, y, path.concat([k]), lbls.concat([k]), slice, out);
+    });
+    return;
+  }
+  out.push({ k: "s", s: slice, p: JSON.stringify(path), b: a === undefined ? undefined : JSON.stringify(a), a: b === undefined ? undefined : JSON.stringify(b), l: lbls.join(" › "), d: jShort(a) + " → " + jShort(b) });
+}
+const jGet = (node, path) => {
+  for (const s of path) {
+    if (node == null) return undefined;
+    if (typeof s === "object") { if (!Array.isArray(node)) return undefined; node = node.find((x) => jId(x) === String(s.id)); } else node = node[s];
+  }
+  return node;
+};
+const jUpd = (node, path, fn) => {
+  if (!path.length) return fn(node);
+  if (node == null) return node;
+  const [s, ...rest] = path;
+  if (typeof s === "object") {
+    if (!Array.isArray(node)) return node;
+    const i = node.findIndex((x) => jId(x) === String(s.id));
+    if (i < 0) return node;
+    const c = node.slice(); c[i] = jUpd(node[i], rest, fn); return c;
+  }
+  const child = jUpd(node[s], rest, fn);
+  if (child === undefined) { const c = { ...node }; delete c[s]; return c; }
+  return { ...node, [s]: child };
+};
+// Macht Operationen rückgängig (in umgekehrter Reihenfolge). Gibt { value, conflicts, skipped } zurück.
+function jUndo(root, ops) {
+  let value = root, conflicts = 0, skipped = 0;
+  [...ops].reverse().forEach((o) => {
+    const path = JSON.parse(o.p);
+    if (o.k === "s") {
+      if (path.length && typeof path[path.length - 1] !== "object" && path.length > 1 && jGet(value, path.slice(0, -1)) === undefined) { skipped++; return; }
+      const cur = jGet(value, path);
+      if ((cur === undefined ? undefined : JSON.stringify(cur)) !== o.a) conflicts++;
+      value = jUpd(value, path, () => (o.b === undefined ? undefined : JSON.parse(o.b)));
+    } else if (o.k === "a") {
+      const id = jId(JSON.parse(o.a)); const arr = jGet(value, path);
+      if (!Array.isArray(arr)) { skipped++; return; }
+      if (!arr.some((x) => jId(x) === id)) conflicts++;
+      value = jUpd(value, path, (ar) => ar.filter((x) => jId(x) !== id));
+    } else if (o.k === "d") {
+      const item = JSON.parse(o.b); const arr = jGet(value, path);
+      if (!Array.isArray(arr)) { skipped++; return; }
+      if (arr.some((x) => jId(x) === jId(item))) { conflicts++; return; }
+      value = jUpd(value, path, (ar) => { const c = ar.slice(); c.splice(Math.min(o.i || 0, c.length), 0, item); return c; });
+    }
+  });
+  return { value, conflicts, skipped };
+}
 
 function App() {
   // Authentifizierungs- & Rollen-Status VOR allen Reitern
@@ -764,6 +844,9 @@ function App() {
   const [lexicon, setLexicon] = useState(() => SYNC_NORMALIZERS.lexicon(null));
   const [craftingProjects, setCraftingProjects] = useState([]);
   const [bastionModule, setBastionModule] = useState(() => SYNC_NORMALIZERS.bastionModule(null));
+  const [journal, setJournal] = useState([]);
+  const [openNav, setOpenNav] = useState("finances");
+  const [navOpenMobile, setNavOpenMobile] = useState(false);
   const [ui, setUi] = useState({});
   const uv = (k, d = "") => ui[k] === undefined ? d : ui[k];
   const su = (k, v) => setUi((p) => ({ ...p, [k]: v }));
@@ -894,6 +977,7 @@ function App() {
         if (parsed.lexicon) setLexicon(SYNC_NORMALIZERS.lexicon(parsed.lexicon));
         if (parsed.craftingProjects) setCraftingProjects(SYNC_NORMALIZERS.craftingProjects(parsed.craftingProjects));
         if (parsed.bastionModule) setBastionModule(SYNC_NORMALIZERS.bastionModule(parsed.bastionModule));
+        if (parsed.journal) setJournal(SYNC_NORMALIZERS.journal(parsed.journal));
       }
       const params = new URLSearchParams(window.location.search);
       const playerParam = params.get("player");
@@ -936,7 +1020,7 @@ function App() {
       if (data) {
         const next = {};
         SYNC_KEYS.forEach((k) => {
-          const listKey = k === "logs" || k === "pendingRequests";
+          const listKey = k === "logs" || k === "pendingRequests" || k === "journal";
           if (listKey || data[k] != null) {
             next[k] = SYNC_NORMALIZERS[k](data[k]);
             lastSynced.current[k] = JSON.stringify(next[k]);
@@ -955,6 +1039,7 @@ function App() {
         if (next.lexicon) setLexicon(next.lexicon);
         if (next.craftingProjects) setCraftingProjects(next.craftingProjects);
         if (next.bastionModule) setBastionModule(next.bastionModule);
+        if (next.journal) setJournal(next.journal);
       }
       setSyncStatus("live");
       setLoaded(true);
@@ -976,7 +1061,7 @@ function App() {
     try {
       localStorage.setItem(
         "dnd55_economy_state_v3",
-        JSON.stringify({ characters, bagOfHolding, shopTabs, logs, pendingRequests, standard, campaignMeta, dmPassword, bastion, factions, quests, lexicon, craftingProjects, bastionModule })
+        JSON.stringify({ characters, bagOfHolding, shopTabs, logs, pendingRequests, standard, campaignMeta, dmPassword, bastion, factions, quests, lexicon, craftingProjects, bastionModule, journal })
       );
     } catch (e) {
       console.error("Fehler beim Speichern:", e);
@@ -985,6 +1070,7 @@ function App() {
     const values = { characters, bagOfHolding, shopTabs, logs, pendingRequests, standard, campaignMeta, bastion, factions, quests, lexicon, craftingProjects, bastionModule };
     const updates = {};
     SYNC_KEYS.forEach((k) => {
+      if (!(k in values)) return;
       const json = JSON.stringify(values[k]);
       if (lastSynced.current[k] !== json) {
         updates[k] = cleanForDb(values[k]);
@@ -997,7 +1083,84 @@ function App() {
         setSyncStatus("error");
       });
     }
-  }, [loaded, syncStatus, characters, bagOfHolding, shopTabs, logs, pendingRequests, standard, campaignMeta, dmPassword, bastion, factions, quests, lexicon, craftingProjects, bastionModule]);
+  }, [loaded, syncStatus, characters, bagOfHolding, shopTabs, logs, pendingRequests, standard, campaignMeta, dmPassword, bastion, factions, quests, lexicon, craftingProjects, bastionModule, journal]);
+
+  // ===== Spielleiter-Protokoll: Aktions-Erkennung (jede lokale Änderung wird mit Akteur, Reiter & Details festgehalten) =====
+  const jr = useRef({ prev: null, last: { t: 0, label: "" }, pending: null, skip: 0, ctx: {} });
+  const journalRef = useRef([]);
+  journalRef.current = journal;
+  useEffect(() => {
+    const rec = (e) => {
+      const t = e.target; const el = t && t.closest ? t.closest("button,a,select,input,textarea") : null;
+      if (!el) return;
+      let label;
+      if (el.tagName === "BUTTON" || el.tagName === "A") label = (el.getAttribute("aria-label") || el.title || el.innerText || "").replace(/\s+/g, " ").trim();
+      else { const lab = el.closest("label"); label = lab && lab.innerText ? lab.innerText.replace(/\s+/g, " ").trim() : "Eingabe: " + (el.placeholder || el.title || el.name || el.tagName.toLowerCase()); }
+      if (!label || label === "✕") label = label === "✕" ? "Entfernen" : "Aktion";
+      jr.current.last = { t: Date.now(), label: label.slice(0, 90) };
+    };
+    const onKey = (e) => { if (e.key === "Enter") rec(e); };
+    ["click", "change", "focusout"].forEach((n) => document.addEventListener(n, rec, true));
+    document.addEventListener("keydown", onKey, true);
+    return () => { ["click", "change", "focusout"].forEach((n) => document.removeEventListener(n, rec, true)); document.removeEventListener("keydown", onKey, true); };
+  }, []);
+  const pushJournal = (entry) => {
+    setJournal((prev) => [entry, ...prev].slice(0, 300));
+    const db = dbRef.current;
+    if (db && syncStatus === "live") {
+      db.child("journal/" + entry.id).set(cleanForDb(entry)).catch(() => {});
+      journalRef.current.slice(299).forEach((o) => db.child("journal/" + o.id).remove().catch(() => {}));
+    }
+  };
+  useEffect(() => {
+    if (!loaded) return;
+    const cur = { characters, shopTabs, standard, campaignMeta, bagOfHolding, bastion, factions, quests, lexicon, craftingProjects, bastionModule, pendingRequests };
+    const prev = jr.current.prev; jr.current.prev = cur;
+    if (!prev) return;
+    const ctx = jr.current.ctx || {};
+    if (!ctx.actor) return;
+    const ops = [];
+    Object.keys(cur).forEach((k) => {
+      if (prev[k] === cur[k]) return;
+      if (syncStatus === "live" && lastSynced.current[k] === JSON.stringify(cur[k])) return; // stammt vom Live-Sync, nicht von dieser Person
+      jdiff(prev[k], cur[k], [], [], k, ops);
+    });
+    if (!ops.length) return;
+    const now = Date.now();
+    if (jr.current.skip > now) { jr.current.skip = 0; return; }
+    const pend = jr.current.pending && jr.current.pending.until > now ? jr.current.pending : null; jr.current.pending = null;
+    if (!pend && now - jr.current.last.t > 2500) return; // automatische Änderung ohne Eingabe (z. B. Normalisierung)
+    pushJournal({
+      id: "j_" + now.toString(36) + Math.random().toString(36).slice(2, 6), ts: now, actor: ctx.actor, role: ctx.role,
+      tab: pend && pend.tab ? pend.tab : ctx.tab || "", title: pend ? pend.title : (jr.current.last.label || "Änderung") + (() => { const nm = ops.find((o) => o.k === "a" || o.k === "d"); return nm && (jr.current.last.label || "").length < 30 ? " – " + nm.d.replace(/^(hinzugefügt|entfernt): /, "") : ""; })(),
+      details: ops.slice(0, 40).map((o) => `${JSLICE_NAMES[o.s] || o.s}${o.l ? " › " + o.l : ""}: ${o.d}`).concat(ops.length > 40 ? [`… und ${ops.length - 40} weitere Änderungen`] : []),
+      ops, reverted: false, undoOf: pend && pend.undoOf ? pend.undoOf : null
+    });
+  }, [loaded, characters, shopTabs, standard, campaignMeta, bagOfHolding, bastion, factions, quests, lexicon, craftingProjects, bastionModule, pendingRequests]);
+
+  // Einmalige Übernahme der alten „Unsere Bastion“ (Standorte, Einrichtungen, BP) in das zusammengeführte Bastionen-Modul (nur DM)
+  useEffect(() => {
+    if (!loaded || authMode !== "dm") return;
+    const b = SYNC_NORMALIZERS.bastion(bastion);
+    if (!b.sites.length && !b.rooms.length && !b.bp) return;
+    jr.current.skip = Date.now() + 3000;
+    const KM = { Luftschiff: "airship", Schiff: "ship", Gildenhalle: "guildhall" };
+    setBastionModule((m0) => {
+      const m = SYNC_NORMALIZERS.bastionModule(m0);
+      const added = b.sites.map((st) => {
+        const type = KM[st.kind] || "fortress";
+        const facs = b.rooms.filter((r) => r.siteId === st.id).map((r) => {
+          const nm = String(r.name || "").toLowerCase();
+          const t = m.templates.facilities.find((x) => x.name.toLowerCase().startsWith(nm) || nm.startsWith(x.name.toLowerCase().split(" ")[0]));
+          const lv = clamp(parseInt(r.level, 10) || 1, 1, t ? Math.max(1, t.levels.length) : 5);
+          return { id: uid("fac"), templateId: t ? t.id : "", name: r.name, level: lv, targetLevel: lv, status: "active", upgradeTurnsRemaining: 0, currentOrder: null, extraOrder: null };
+        });
+        return { id: uid("bastion"), name: st.name, type, tier: 1, maxSlots: Math.max(4, facs.length), owners: A(st.owners), customBpBonus: 0, defenseBonus: 0, baseBpOverride: "", maxFacLevel: "", facilities: facs, garrison: [], missions: [], airshipStats: type === "airship" ? { hullHp: 50, maxHullHp: 50, fuel: 100, maxFuel: 100, baseSpeed: 3, crewMinimum: 10, fuelPerDay: 10, weaponSlots: 2, weapons: [] } : null };
+      });
+      return { ...m, globalState: { ...m.globalState, bastionPoints: m.globalState.bastionPoints + b.bp }, bastions: [...m.bastions, ...added] };
+    });
+    setBastion({ ...b, sites: [], rooms: [], bp: 0, defendersList: [], commands: {}, requests: [] });
+  }, [loaded, authMode, bastion]);
 
   // Automatisches Öffnen des Genehmigungs-Popups in der DM-Zentrale bei neuen Anfragen
   useEffect(() => {
@@ -1047,6 +1210,9 @@ function App() {
     return false;
   }, [loggedInPlayer, activeChar, isPartyUnlocked]);
 
+  // Gold-Helfer: alle Reiter buchen über die Konten aus „Finanzen & Shops“ (Gruppenkasse bzw. Charakter-Konto)
+  const partyGp = partyChar ? Math.floor(getTotalCopper(partyChar.coins) / 100) : 0;
+  const gpOf = (id) => { const c = characters.find((x) => x.id === id); return c ? Math.floor(getTotalCopper(c.coins) / 100) : 0; };
   // Protokoll mit Undo-Metadaten (undoData)
   const addLog = (actor, type, title, amountText, source = "Spieler", undoData = null) => {
     const newEntry = {
@@ -1116,6 +1282,53 @@ function App() {
       return [undoNotice, ...updated.slice(0, 99)];
     });
     notify(`Buchung „${entry.title}“ wurde rückgängig gemacht.`);
+  };
+
+  // Gold buchen: gp > 0 gutschreiben, gp < 0 abbuchen (mit Eintrag im Finanz-Protokoll)
+  const moveGp = (charId, gp, title, src = "DM") => {
+    const c = characters.find((x) => x.id === charId);
+    if (!c || !gp) return !gp;
+    const total = getTotalCopper(c.coins); const cp = Math.round(gp * 100);
+    if (total + cp < 0) { notify(`${c.name}: zu wenig Gold (${-gp} GM nötig, ${Math.floor(total / 100)} vorhanden).`, "error"); return false; }
+    setCharacters((prev) => prev.map((x) => x.id === charId ? { ...x, coins: copperToCoins(Math.max(0, getTotalCopper(x.coins) + cp)) } : x));
+    addLog(c.name, cp < 0 ? "expense" : "dm_event", title, `${cp < 0 ? "-" : "+"}${formatCurrency(Math.abs(cp), standard)}`, src, { kind: "multi", changes: [{ charId, deltaCp: -cp }] });
+    return true;
+  };
+
+  // --- Spielleiter-Protokoll: Rückgängig machen ---
+  jr.current.ctx = { actor: authMode === "dm" ? "Spielleiter (DM-Zentrale)" : loggedInPlayer ? loggedInPlayer.name : "", role: authMode === "dm" ? "DM" : "Spieler", tab: (jr.current.ctx || {}).tab };
+  const SLICE_SET = { characters: setCharacters, shopTabs: setShopTabs, standard: setStandard, campaignMeta: setCampaignMeta, bagOfHolding: setBagOfHolding, bastion: setBastion, factions: setFactions, quests: setQuests, lexicon: setLexicon, craftingProjects: setCraftingProjects, bastionModule: setBastionModule, pendingRequests: setPendingRequests };
+  const SLICE_VAL = { characters, shopTabs, standard, campaignMeta, bagOfHolding, bastion, factions, quests, lexicon, craftingProjects, bastionModule, pendingRequests };
+  const markJournal = (id, patch) => {
+    setJournal((prev) => prev.map((x) => x.id === id ? { ...x, ...patch } : x));
+    if (dbRef.current && syncStatus === "live") dbRef.current.child("journal/" + id).update(cleanForDb(patch)).catch(() => {});
+  };
+  const groupOps = (e) => { const g = {}; A(e.ops).forEach((o) => { (g[o.s] = g[o.s] || []).push(o); }); return g; };
+  const undoJournalEntries = (entries, title) => {
+    entries.forEach((e) => {
+      const g = groupOps(e);
+      Object.keys(g).forEach((k) => { if (SLICE_SET[k]) SLICE_SET[k]((prev) => jUndo(prev, g[k]).value); });
+      markJournal(e.id, { reverted: true, revertedAt: Date.now() });
+      if (e.undoOf) markJournal(e.undoOf, { reverted: false });
+    });
+    jr.current.pending = { title, tab: entries.length === 1 ? entries[0].tab : (jr.current.ctx || {}).tab, undoOf: entries.length === 1 && !entries[0].undoOf ? entries[0].id : null, until: Date.now() + 4000 };
+  };
+  const handleUndoJournal = (e) => {
+    if (!e || e.reverted) return;
+    const g = groupOps(e); let conflicts = 0, skipped = 0;
+    Object.keys(g).forEach((k) => { const r = jUndo(SLICE_VAL[k], g[k]); conflicts += r.conflicts; skipped += r.skipped; });
+    const warn = conflicts || skipped ? `\n\nAchtung: ${conflicts} Wert(e) wurden seit dieser Aktion erneut verändert${skipped ? `, ${skipped} Element(e) existieren nicht mehr (werden übersprungen)` : ""}. Trotzdem zurücksetzen?` : "";
+    if (!window.confirm(`Aktion „${e.title}“ von ${e.actor} ${e.undoOf ? "wiederherstellen" : "rückgängig machen"}?${warn}`)) return;
+    undoJournalEntries([e], (e.undoOf ? "Wiederhergestellt: " : "Rückgängig: ") + e.title);
+    notify(e.undoOf ? "Aktion wiederhergestellt." : "Aktion rückgängig gemacht.");
+  };
+  const handleRollbackFrom = (e) => {
+    const idx = journal.findIndex((x) => x.id === e.id); if (idx < 0) return;
+    const list = journal.slice(0, idx + 1).filter((x) => !x.reverted);
+    if (!list.length) return;
+    if (!window.confirm(`${list.length} Aktion(en) vom Ende des Protokolls bis einschließlich „${e.title}“ zurückrollen (neueste zuerst)?`)) return;
+    undoJournalEntries(list, `Zurückgerollt bis: ${e.title} (${list.length} Aktionen)`);
+    notify(`${list.length} Aktionen zurückgerollt.`);
   };
 
   // --- LOGIN / LOGOUT VOR ALLEN REITER-INHALTEN ---
@@ -2150,10 +2363,7 @@ function App() {
   );
 
   const playerFinancePanel = React.createElement("div", { className: panelBox },
-    React.createElement("div", { className: "flex flex-wrap gap-2 border-b border-slate-800 pb-3" },
-      shopTabs.map((t) => React.createElement("button", { key: t.id, onClick: () => setPlayerFinanceTab(t.id), className: tabBtn(activeTabId === t.id) }, t.name)),
-      SPECIAL_PLAYER_TABS.map((t) => React.createElement("button", { key: t.id, onClick: () => setPlayerFinanceTab(t.id), className: tabBtn(activeTabId === t.id) }, t.label))
-    ),
+    null,
     activeShopTab && React.createElement("div", { className: "space-y-4" },
       React.createElement("p", { className: "text-xs text-slate-400" }, activeShopTab.description),
       React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3" },
@@ -2410,23 +2620,7 @@ function App() {
       // Container-Auswahl: Persönliches Inventar | Gruppenwagen | Nimmervoller Beutel
       React.createElement("div", { className: panelBox },
         React.createElement("div", { className: "flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3" },
-          React.createElement("div", { className: "flex flex-wrap gap-2" },
-            React.createElement("button", {
-              type: "button",
-              onClick: () => setPlayerInvSubTab("personal"),
-              className: tabBtn(playerInvSubTab === "personal")
-            }, `Mein Rucksack (${(targetChar.inventory || []).length})`),
-            partyChar && React.createElement("button", {
-              type: "button",
-              onClick: () => setPlayerInvSubTab("party_wagon"),
-              className: tabBtn(playerInvSubTab === "party_wagon")
-            }, `Gruppenwagen (${(partyChar.inventory || []).length})`),
-            bagOfHolding.enabled && React.createElement("button", {
-              type: "button",
-              onClick: () => setPlayerInvSubTab("bag_of_holding"),
-              className: tabBtn(playerInvSubTab === "bag_of_holding")
-            }, `Nimmervoller Beutel (${(bagOfHolding.items || []).length})`)
-          ),
+          React.createElement("span", null),
           React.createElement("input", {
             type: "text",
             placeholder: "Gegenstand suchen...",
@@ -2670,18 +2864,7 @@ function App() {
       // Sub-Navigation für DM-Inventar
       React.createElement("div", { className: panelBox },
         React.createElement("div", { className: "flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3" },
-          React.createElement("div", { className: "flex flex-wrap gap-2" },
-            React.createElement("button", {
-              type: "button",
-              onClick: () => setDmInvSubTab("create_grant"),
-              className: tabBtn(dmInvSubTab === "create_grant")
-            }, "Beute & Items erstellen / vergeben"),
-            React.createElement("button", {
-              type: "button",
-              onClick: () => setDmInvSubTab("party_inspect"),
-              className: tabBtn(dmInvSubTab === "party_inspect")
-            }, "Gruppen-Inventare, Traglast & Attunement prüfen")
-          ),
+          React.createElement("span", null),
           React.createElement("div", { className: "flex items-center gap-2 text-xs text-slate-400" },
             React.createElement("label", { className: "flex items-center gap-1.5 cursor-pointer" },
               React.createElement("input", {
@@ -3030,9 +3213,7 @@ function App() {
 
   const dmFinancePanel = React.createElement("div", { className: panelBox },
     React.createElement("div", { className: "flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3" },
-      React.createElement("div", { className: "flex flex-wrap gap-2" },
-        DM_FINANCE_TABS.map((t) => React.createElement("button", { key: t.id, onClick: () => setDmFinanceTab(t.id), className: tabBtn(dmFinanceTab === t.id) }, t.label))
-      ),
+      React.createElement("span", null),
       React.createElement("span", { className: "text-[11px] text-slate-400" },
         "Aktueller Standard: ", React.createElement("strong", { className: "text-amber-300" }, standard === "silver" ? "Silber-Anker" : "Gold-Standard")
       )
@@ -3343,123 +3524,6 @@ function App() {
   const stamp = () => new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
   const num = (v) => parseInt(v, 10) || 0;
 
-  // ---------- BASTION ----------
-  const bUp = (fn) => setBastion((b) => fn(SYNC_NORMALIZERS.bastion(b)));
-  const updRoom = (id, p) => bUp((b) => ({ ...b, rooms: b.rooms.map((r) => r.id === id ? { ...r, ...p } : r) }));
-  const siteOf = (b, r) => r.siteId;
-  const isOwner = (b, siteId) => { const s = b.sites.find((x) => x.id === siteId); return !!s && (A(s.owners).length === 0 || A(s.owners).includes(meId)); };
-  const pushEvent = (b, text) => ({ ...b, eventLog: [{ id: uid("ev"), text, time: stamp() }, ...b.eventLog].slice(0, 30) });
-  const submitCmd = (room) => {
-    const cmd = uv("cmd_" + room.id, "craft");
-    bUp((b) => ({ ...b, commands: { ...b.commands, [room.id]: { cmd, note: uv("note_" + room.id), charId: meId, status: b.requireApproval ? "pending" : "approved" } } }));
-    notify(bastion.requireApproval ? "Befehl eingereicht – wartet auf DM-Freigabe." : "Befehl eingetragen.");
-  };
-  const runBastionRound = () => {
-    const b = SYNC_NORMALIZERS.bastion(bastion); const lines = []; let bp = b.bp; const defs = [...b.defendersList];
-    const rooms = b.rooms.map((r) => {
-      const c = b.commands[r.id];
-      if (!c || c.status !== "approved") return { ...r, status: "Untätig" };
-      const nr = { ...r }; const lb = CMDS[c.cmd];
-      if (c.cmd === "maintain") { nr.status = "Instandgesetzt"; lines.push(`${r.name}: Wartung`); }
-      else if (c.cmd === "recruit") { nr.defenders = (r.defenders || 0) + 1; nr.status = "Rekrutiert"; defs.push({ id: uid("def"), name: `Rekrut (Runde ${b.turn})`, roomId: r.id }); lines.push(`${r.name}: neuer Verteidiger`); }
-      else {
-        let p = (r.productionProgress || 0) + 100 / Math.max(1, r.turnsNeeded || 2); nr.status = lb.split(" ")[0];
-        if (p >= 99) { p = 0; const g = c.cmd === "trade" ? 2 : c.cmd === "harvest" ? 1 : 0; bp += g; lines.push(`${r.name}: ${lb} abgeschlossen${g ? ` (+${g} BP)` : ""}`); }
-        else lines.push(`${r.name}: ${lb} ${Math.round(p)} %`);
-        nr.productionProgress = Math.round(p);
-      }
-      return nr;
-    });
-    setBastion(pushEvent({ ...b, rooms, bp, defendersList: defs, commands: {}, turn: b.turn + 1 }, `Runde ${b.turn}: ${lines.length ? lines.join("; ") : "keine Befehle"}`));
-    addLog("Bastion", "dm_event", `Bastions-Runde ${b.turn} ausgewertet`, lines.length ? `${lines.length} Befehle` : "Keine Befehle", "DM");
-    notify(`Bastions-Runde ${b.turn} ausgewertet.`);
-  };
-  const rollBastionEvent = () => {
-    const roll = 1 + Math.floor(Math.random() * 100); const lst = [...bastion.events].sort((a, b) => num(a.upTo) - num(b.upTo)); const ev = lst.find((e) => roll <= num(e.upTo)) || lst[lst.length - 1];
-    if (!ev) { notify("Keine Ereignisse in der Tabelle.", "error"); return; }
-    bUp((b) => pushEvent(b, `W100 ${roll} – ${ev.title}: ${ev.text}`));
-    addLog("Bastion", "dm_event", `Bastions-Ereignis: ${ev.title}`, `W100 ${roll}`, "DM");
-    notify(`W100 ${roll}: ${ev.title}`);
-  };
-  const requestShop = (it, roomId, siteId) => {
-    bUp((b) => ({ ...b, requests: [...b.requests, { id: uid("bq"), charId: meId, charName: cname(meId), itemId: it.id, name: it.name, cost: it.cost, roomId: roomId || "", siteId: siteId || "" }] }));
-    notify(`Anfrage „${it.name}“ an den DM gesendet.`);
-  };
-  const approveShop = (q) => {
-    const b = SYNC_NORMALIZERS.bastion(bastion); const it = b.shop.find((x) => x.id === q.itemId);
-    if (it && it.kind === "room" && !b.sites.some((s) => s.id === q.siteId)) { notify("Die gewählte Bastion existiert nicht mehr.", "error"); return; }
-    if (!it || b.bp < q.cost) { notify("Nicht genug BP oder Artikel entfernt.", "error"); return; }
-    const nb = { ...b, bp: b.bp - q.cost, requests: b.requests.filter((x) => x.id !== q.id) };
-    if (it.kind === "room") nb.rooms = [...nb.rooms, { id: uid("room"), name: it.name, type: it.roomType || "Special", level: it.level || 1, defenders: 0, status: "Untätig", productionProgress: 0, siteId: q.siteId, turnsNeeded: 2 }];
-    else if (it.kind === "upgrade") nb.rooms = nb.rooms.map((r) => r.id === q.roomId ? { ...r, level: Math.min(5, (r.level || 1) + 1) } : r);
-    else if (it.kind === "defender") { nb.rooms = nb.rooms.map((r) => r.id === q.roomId ? { ...r, defenders: (r.defenders || 0) + 1 } : r); nb.defendersList = [...nb.defendersList, { id: uid("def"), name: it.name, roomId: q.roomId }]; }
-    else if (it.kind === "site") nb.sites = [...nb.sites, { id: uid("site"), name: it.name, kind: it.siteKind || "Luftschiff", owners: [q.charId] }];
-    setBastion(nb); addLog(q.charName, "expense", `Bastion: ${it.name}`, `-${q.cost} BP`, "DM-Genehmigt"); notify(`Genehmigt: ${it.name}`);
-  };
-  const roomCard = (r) => {
-    const c = bastion.commands[r.id]; const defs = bastion.defendersList.filter((d) => d.roomId === r.id);
-    return h("div", { key: r.id, className: sub },
-      h("div", { className: "flex justify-between gap-2" }, h("span", { className: "font-semibold text-sm text-white" }, r.name), Tag(r.type === "Special" ? "Spezial" : "Basis", r.type === "Special" ? "border-purple-600/50 bg-purple-950/40 text-purple-300" : undefined)),
-      h("div", { className: "text-xs text-slate-400" }, `Stufe ${r.level} · Verteidiger: ${r.defenders || 0} · ${r.status}`),
-      Bar(r.productionProgress || 0, "bg-amber-500"),
-      defs.length > 0 && h("div", { className: "text-[11px] text-slate-500" }, defs.map((d) => d.name).join(", ")),
-      c && h("div", { className: "text-[11px] text-cyan-300" }, `Befehl: ${CMDS[c.cmd]} (${c.status === "approved" ? "freigegeben" : "wartet auf DM"})`));
-  };
-  const eventList = (b) => b.eventLog.length > 0 && h("div", { className: sub }, lbl("Ereignisse & Runden-Protokoll"), b.eventLog.map((e) => h("div", { key: e.id, className: `text-xs flex justify-between gap-2 ${/Angriff/.test(e.text) ? "text-red-300" : "text-slate-300"}` }, h("span", null, `${e.time} · ${e.text}`), dm && Btn("✕", () => bUp((x) => ({ ...x, eventLog: x.eventLog.filter((y) => y.id !== e.id) })), btnDanger))));
-  const renderBastionPlayer = () => {
-    const b = bastion; const [tab, tabs] = SubTabs("bTab", "overview", [["overview", "Übersicht"], ["orders", "Befehle"], ["shop", "Bastions-Shop"]]);
-    const myRooms = b.rooms.filter((r) => isOwner(b, r.siteId));
-    const myReq = b.requests.filter((q) => q.charId === meId);
-    return h("div", { className: panelBox }, Head(Castle, "Unsere Bastion", `Bastions-Runde ${b.turn} · ${b.defendersList.length} benannte Verteidiger`, h("div", { className: "text-right" }, h("div", { className: "text-xl font-extrabold text-amber-300" }, `${b.bp} BP`), lbl("Bastionspunkte"))), tabs,
-      tab === "overview" && h("div", { className: "space-y-4" },
-        b.sites.map((s) => h("div", { key: s.id, className: "space-y-2" }, h("div", { className: "flex flex-wrap items-center gap-2 text-sm font-bold text-amber-200" }, s.name, Tag(s.kind, "border-cyan-700/50 bg-cyan-950/40 text-cyan-300"), h("span", { className: "text-[11px] font-normal text-slate-400" }, `Eigentümer: ${A(s.owners).map(cname).join(", ") || "alle"}`)), h("div", { className: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3" }, b.rooms.filter((r) => siteOf(b, r) === s.id).map(roomCard)))),
-        b.sites.length === 0 && h("p", { className: "text-sm text-slate-500" }, "Noch keine Bastion – der DM legt sie an."), b.sites.length > 0 && b.rooms.length === 0 && h("p", { className: "text-sm text-slate-500" }, "Noch keine Einrichtungen – der DM schaltet sie im Bastions-Shop frei."), eventList(b)),
-      tab === "orders" && h("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-3" },
-        myRooms.map((r) => h("div", { key: r.id, className: sub }, h("div", { className: "text-sm font-semibold text-white" }, r.name), Sel(uv("cmd_" + r.id, "craft"), Object.entries(CMDS), (v) => su("cmd_" + r.id, v), `${inp} w-full`), TI("note_" + r.id, "Notiz / Ziel (z. B. Heiltränke)", ta), Btn("Befehl für nächsten Zug einreichen", () => submitCmd(r), btnPrimary), b.commands[r.id] && h("div", { className: "text-[11px] text-cyan-300" }, `Aktuell: ${CMDS[b.commands[r.id].cmd]} (${b.commands[r.id].status === "approved" ? "freigegeben" : "wartet auf DM"})`))),
-        myRooms.length === 0 && h("p", { className: "text-sm text-slate-500" }, "Keine Einrichtung, für die du Befehle geben kannst.")),
-      tab === "shop" && h("div", { className: "space-y-3" },
-        myReq.length > 0 && h("div", { className: "text-xs text-amber-300" }, `Offene Anfragen: ${myReq.map((q) => q.name).join(", ")}`),
-        h("div", { className: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3" }, b.shop.map((it) => {
-          const needsRoom = it.kind === "upgrade" || it.kind === "defender"; const rid = uv("shopRoom_" + it.id, (b.rooms[0] || {}).id || ""); const sid = uv("shopSite_" + it.id, (b.sites[0] || {}).id || "");
-          return h("div", { key: it.id, className: sub }, h("div", { className: "flex justify-between gap-2" }, h("span", { className: "font-semibold text-sm text-white" }, it.name), Tag(KIND_LABEL[it.kind] || it.kind)), h("p", { className: "text-xs text-slate-400" }, it.desc),
-            needsRoom && Sel(rid, b.rooms.map((r) => [r.id, r.name]), (v) => su("shopRoom_" + it.id, v), `${inp} w-full`),
-            it.kind === "room" && Sel(sid, b.sites.map((s) => [s.id, s.name]), (v) => su("shopSite_" + it.id, v), `${inp} w-full`),
-            h("div", { className: "flex justify-between items-center" }, h("span", { className: "font-bold text-amber-300 text-sm" }, `${it.cost} BP`), Btn("Anfragen", () => requestShop(it, needsRoom ? rid : "", it.kind === "room" ? sid : ""), btnPrimary, { disabled: b.bp < it.cost || (needsRoom && !rid) || (it.kind === "room" && !sid) })));
-        }))));
-  };
-  const renderBastionDm = () => {
-    const b = bastion; const [tab, tabs] = SubTabs("bdTab", "turn", [["turn", "Zug & Ereignisse"], ["rooms", "Einrichtungen"], ["shop", "Shop & Anfragen"]]);
-    const roomOpts = b.rooms.map((r) => [r.id, r.name]);
-    return h("div", { className: panelBox }, Head(Castle, "Bastions-Spielleitung", `Runde ${b.turn} · ${b.bp} BP`), tabs,
-      tab === "turn" && h("div", { className: "space-y-4" },
-        h("div", { className: "flex flex-wrap gap-2 items-center" }, Btn("Neue Bastions-Runde auslösen", runBastionRound, btnPrimary), Btn("Bastions-Ereignis würfeln", rollBastionEvent), Chk("Befehle brauchen DM-Freigabe", b.requireApproval, (v) => bUp((x) => ({ ...x, requireApproval: v })))),
-        h("div", { className: "flex flex-wrap items-center gap-1.5" }, h("span", { className: "text-sm text-amber-300 font-bold mr-2" }, `${b.bp} BP`), [-5, -1, 1, 5].map((n) => h("span", { key: n }, Btn(n > 0 ? `+${n}` : `${n}`, () => bUp((x) => ({ ...x, bp: Math.max(0, x.bp + n) })))))),
-        h("div", { className: sub }, lbl("Befehle für den nächsten Zug"),
-          b.rooms.filter((r) => b.commands[r.id]).map((r) => { const c = b.commands[r.id]; return h("div", { key: r.id, className: "flex flex-wrap items-center justify-between gap-2 text-xs text-slate-200" }, h("span", null, `${r.name}: ${CMDS[c.cmd]} – ${cname(c.charId)}${c.note ? ` (${c.note})` : ""}`), c.status === "pending" ? h("span", { className: "flex gap-1.5" }, Btn("Genehmigen", () => bUp((x) => ({ ...x, commands: { ...x.commands, [r.id]: { ...c, status: "approved" } } }))), Btn("Ablehnen", () => bUp((x) => { const cc = { ...x.commands }; delete cc[r.id]; return { ...x, commands: cc }; }), btnDanger)) : Tag("freigegeben", "border-emerald-600/50 bg-emerald-950/40 text-emerald-300")); }),
-          !b.rooms.some((r) => b.commands[r.id]) && h("div", { className: "text-xs text-slate-500" }, "Noch keine Befehle eingereicht.")),
-        eventList(b)),
-      tab === "rooms" && h("div", { className: "space-y-4" },
-        h("div", { className: sub }, lbl("Neue Bastion (z. B. Luftschiff)"), h("div", { className: "flex flex-wrap gap-2" }, TI("nsName", "Name"), Sel(uv("nsKind", "Luftschiff"), SITE_KINDS.map((k) => [k, k]), (v) => su("nsKind", v)), Btn("Anlegen", () => { if (!uv("nsName").trim()) return; bUp((x) => ({ ...x, sites: [...x.sites, { id: uid("site"), name: uv("nsName").trim(), kind: uv("nsKind", "Luftschiff"), owners: [] }] })); su("nsName", ""); }, btnPrimary)),
-          b.sites.map((s) => h("div", { key: s.id, className: "flex flex-wrap items-center gap-2 border-t border-slate-800 pt-2" }, Fld("sn" + s.id, s.name, (v) => bUp((x) => ({ ...x, sites: x.sites.map((y) => y.id === s.id ? { ...y, name: v } : y) })), { cls: `${inp} w-40` }), Sel(s.kind, SITE_KINDS.map((k) => [k, k]), (v) => bUp((x) => ({ ...x, sites: x.sites.map((y) => y.id === s.id ? { ...y, kind: v } : y) }))), lbl("Eigentümer:"), pcs.map((c) => h("span", { key: c.id }, Chk(c.name, A(s.owners).includes(c.id), (on) => bUp((x) => ({ ...x, sites: x.sites.map((y) => y.id === s.id ? { ...y, owners: on ? [...A(y.owners), c.id] : A(y.owners).filter((i) => i !== c.id) } : y) }))))), Btn("Bastion löschen", () => { if (window.confirm(`„${s.name}“ samt Einrichtungen löschen?`)) bUp((x) => ({ ...x, sites: x.sites.filter((y) => y.id !== s.id), rooms: x.rooms.filter((r) => r.siteId !== s.id) })); }, btnDanger)))),
-        h("div", { className: sub }, lbl("Neue Einrichtung"), h("div", { className: "flex flex-wrap gap-2" }, TI("nrName", "Name (z. B. Schmiede)"), Sel(uv("nrType", "Special"), [["Special", "Spezial"], ["Basic", "Basis"]], (v) => su("nrType", v)), Sel(uv("nrSite", (b.sites[0] || {}).id || ""), b.sites.map((s) => [s.id, s.name]), (v) => su("nrSite", v)), Btn("Anlegen", () => { if (!uv("nrName").trim() || !b.sites.length) { notify("Erst eine Bastion anlegen.", "error"); return; } bUp((x) => ({ ...x, rooms: [...x.rooms, { id: uid("room"), name: uv("nrName").trim(), type: uv("nrType", "Special"), level: 1, defenders: 0, status: "Untätig", productionProgress: 0, siteId: uv("nrSite", x.sites[0].id), turnsNeeded: 2 }] })); su("nrName", ""); }, btnPrimary))),
-        b.rooms.map((r) => h("div", { key: r.id, className: sub }, h("div", { className: "flex flex-wrap items-center gap-2" },
-          Fld("rn" + r.id, r.name, (v) => updRoom(r.id, { name: v }), { cls: `${inp} w-40` }),
-          Btn("Stufe −", () => updRoom(r.id, { level: Math.max(1, (r.level || 1) - 1) })), Tag(`Stufe ${r.level}`), Btn("Stufe +", () => updRoom(r.id, { level: Math.min(5, (r.level || 1) + 1) })),
-          Btn("−", () => updRoom(r.id, { defenders: Math.max(0, (r.defenders || 0) - 1) })), Tag(`${r.defenders || 0} Verteidiger`), Btn("+", () => updRoom(r.id, { defenders: (r.defenders || 0) + 1 })),
-          Fld("rs" + r.id, r.status, (v) => updRoom(r.id, { status: v }), { cls: `${inp} w-32` }),
-          Fld("rp" + r.id, String(r.productionProgress || 0), (v) => updRoom(r.id, { productionProgress: clamp(num(v), 0, 100) }), { cls: `${inp} w-16`, type: "number" }), lbl("% Fortschritt"),
-          Sel(siteOf(b, r), b.sites.map((s) => [s.id, s.name]), (v) => updRoom(r.id, { siteId: v })),
-          Btn("Löschen", () => { if (window.confirm(`Einrichtung „${r.name}“ löschen?`)) bUp((x) => ({ ...x, rooms: x.rooms.filter((q) => q.id !== r.id), defendersList: x.defendersList.filter((d) => d.roomId !== r.id) })); }, btnDanger)))),
-        h("div", { className: sub }, lbl("Benannte Verteidiger / Spezialisten"), h("div", { className: "flex flex-wrap gap-2" }, TI("ndName", "Name"), Sel(uv("ndRoom", (b.rooms[0] || {}).id || ""), roomOpts, (v) => su("ndRoom", v)), Btn("Hinzufügen", () => { if (!uv("ndName").trim() || !b.rooms.length) return; bUp((x) => ({ ...x, defendersList: [...x.defendersList, { id: uid("def"), name: uv("ndName").trim(), roomId: uv("ndRoom", x.rooms[0].id) }] })); su("ndName", ""); }, btnPrimary)),
-          b.defendersList.map((d) => h("div", { key: d.id, className: "flex justify-between text-xs text-slate-300" }, h("span", null, `${d.name} – ${(b.rooms.find((r) => r.id === d.roomId) || {}).name || "?"}`), Btn("✕", () => bUp((x) => ({ ...x, defendersList: x.defendersList.filter((q) => q.id !== d.id) })), btnDanger))))),
-      tab === "shop" && h("div", { className: "space-y-4" },
-        h("div", { className: sub }, lbl("Offene Shop-Anfragen"), b.requests.map((q) => h("div", { key: q.id, className: "flex flex-wrap items-center justify-between gap-2 text-xs text-slate-200" }, h("span", null, `${q.charName}: ${q.name} (${q.cost} BP)`), h("span", { className: "flex gap-1.5" }, Btn("Genehmigen", () => approveShop(q), btnPrimary), Btn("Ablehnen", () => bUp((x) => ({ ...x, requests: x.requests.filter((r) => r.id !== q.id) })), btnDanger)))), b.requests.length === 0 && h("div", { className: "text-xs text-slate-500" }, "Keine offenen Anfragen.")),
-        h("div", { className: sub }, lbl("Neuer Shop-Artikel"), h("div", { className: "flex flex-wrap gap-2" }, TI("nsiName", "Name"), Sel(uv("nsiKind", "room"), Object.entries(KIND_LABEL), (v) => su("nsiKind", v)), TI("nsiCost", "BP", `${inp} w-20`), TI("nsiDesc", "Beschreibung", `${inp} flex-1 min-w-[10rem]`), uv("nsiKind", "room") === "site" && Sel(uv("nsiSite", "Luftschiff"), SITE_KINDS.map((k) => [k, k]), (v) => su("nsiSite", v)), Btn("Hinzufügen", () => { if (!uv("nsiName").trim()) return; const kind = uv("nsiKind", "room"); bUp((x) => ({ ...x, shop: [...x.shop, { id: uid("bs"), kind, name: uv("nsiName").trim(), cost: Math.max(0, num(uv("nsiCost"))), desc: uv("nsiDesc"), roomType: "Special", level: 1, siteKind: uv("nsiSite", "Luftschiff") }], shopTouched: true })); setUi((p) => ({ ...p, nsiName: "", nsiCost: "", nsiDesc: "" })); }, btnPrimary))),
-        h("div", { className: sub }, lbl("Ereignistabelle (W100 bis …)"), b.events.map((ev) => h("div", { key: ev.id, className: "flex flex-wrap gap-1.5 items-center" }, Fld("ev" + ev.id + "u", String(ev.upTo), (v) => bUp((x) => ({ ...x, eventsTouched: true, events: x.events.map((y) => y.id === ev.id ? { ...y, upTo: num(v) } : y) })), { cls: `${inp} w-16`, type: "number" }), Fld("ev" + ev.id + "t", ev.title, (v) => bUp((x) => ({ ...x, eventsTouched: true, events: x.events.map((y) => y.id === ev.id ? { ...y, title: v } : y) })), { cls: `${inp} w-40` }), Fld("ev" + ev.id + "x", ev.text, (v) => bUp((x) => ({ ...x, eventsTouched: true, events: x.events.map((y) => y.id === ev.id ? { ...y, text: v } : y) })), { cls: `${inp} flex-1 min-w-[12rem]` }), Btn("✕", () => bUp((x) => ({ ...x, eventsTouched: true, events: x.events.filter((y) => y.id !== ev.id) })), btnDanger))), Btn("+ Ereignis", () => bUp((x) => ({ ...x, eventsTouched: true, events: [...x.events, { id: uid("be"), upTo: 100, title: "Neues Ereignis", text: "" }] })), btnPrimary)),
-        h("div", { className: "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3" }, b.shop.map((it) => h("div", { key: it.id, className: sub }, h("div", { className: "flex justify-between gap-2" }, h("span", { className: "font-semibold text-sm text-white" }, it.name), Tag(KIND_LABEL[it.kind] || it.kind)), h("p", { className: "text-xs text-slate-400" }, it.desc),
-          h("div", { className: "flex items-center gap-2" }, Fld("sc" + it.id, String(it.cost), (v) => bUp((x) => ({ ...x, shop: x.shop.map((s) => s.id === it.id ? { ...s, cost: Math.max(0, num(v)) } : s), shopTouched: true })), { cls: `${inp} w-20`, type: "number" }), lbl("BP"), Btn("Entfernen", () => bUp((x) => ({ ...x, shop: x.shop.filter((s) => s.id !== it.id), shopTouched: true })), btnDanger)))))));
-  };
-
   // ---------- RUF & FRAKTIONEN ----------
   const GRAD = "linear-gradient(to right,#7f1d1d,#dc2626,#f87171,#fb923c,#fde047,#bef264,#4ade80,#16a34a,#14532d)";
   const GBar = (e) => h("div", { className: "space-y-0.5" }, h("div", { className: "relative h-3 rounded-full overflow-hidden bg-slate-800" }, h("div", { className: "absolute inset-0 opacity-25", style: { background: GRAD } }), h("div", { className: "absolute inset-0", style: { background: GRAD, clipPath: `inset(0 ${100 - (e + 100) / 2}% 0 0)` } }), h("div", { className: "absolute inset-y-0 w-0.5 bg-white", style: { left: `${(e + 100) / 2}%` } })), h("div", { className: "flex justify-between text-[9px] text-slate-500" }, h("span", null, "−100"), h("span", null, "0"), h("span", null, "+100")));
@@ -3521,7 +3585,7 @@ function App() {
   const questCard = (q) => h("div", { key: q.id, className: sub },
     h("div", { className: "flex justify-between gap-2" }, h("span", { className: "font-semibold text-sm text-white" }, q.title), Tag(q.status, q.status === "Aktiv" ? "border-emerald-600/50 bg-emerald-950/40 text-emerald-300" : q.status === "Erledigt" ? undefined : "border-red-700/50 bg-red-950/40 text-red-300")),
     (q.giver || q.location) && h("div", { className: "text-[11px] text-slate-400" }, [q.giver && `Auftraggeber: ${q.giver}`, q.location && `Ort: ${q.location}`].filter(Boolean).join(" · ")),
-    q.publicNotes && h("p", { className: "text-xs text-slate-300" }, q.publicNotes), q.rewardPreview && h("div", { className: "text-xs text-amber-300" }, `Belohnung: ${q.rewardPreview}`));
+    q.publicNotes && h("p", { className: "text-xs text-slate-300" }, q.publicNotes), (q.rewardPreview || num(q.rewardGp) > 0) && h("div", { className: "text-xs text-amber-300" }, `Belohnung: ${[q.rewardPreview, num(q.rewardGp) > 0 ? `${q.rewardGp} GM` : ""].filter(Boolean).join(" · ")}${q.rewardPaid ? " (ausgezahlt)" : ""}`));
   const renderQuests = () => {
     const vis = qSort(dm ? A(quests) : A(quests).filter((q) => q.visible));
     const col = (title, cat) => h("div", { className: "space-y-2" }, h("div", { className: "text-xs font-bold uppercase tracking-wider text-slate-400" }, title), vis.filter((q) => q.category === cat).map(questCard), !vis.some((q) => q.category === cat) && h("div", { className: "text-xs text-slate-600" }, "—"));
@@ -3534,10 +3598,10 @@ function App() {
         h("div", { className: sub }, lbl("Neue Quest / neues Gerücht"), h("div", { className: "flex flex-wrap gap-2" }, TI("nqTitle", "Titel"), Sel(uv("nqCat", "Hauptquest"), Q_CATS.map((k) => [k, k]), (v) => su("nqCat", v)), TI("nqGiver", "Auftraggeber"), TI("nqLoc", "Ort"), TI("nqRew", "Belohnungsvorschau"), Btn("Anlegen", () => { if (!uv("nqTitle").trim()) return; setQuests((q) => [...A(q), { id: uid("q"), title: uv("nqTitle").trim(), category: uv("nqCat", "Hauptquest"), status: "Aktiv", giver: uv("nqGiver"), location: uv("nqLoc"), rewardPreview: uv("nqRew"), publicNotes: "", dmSecrets: "", visible: false, acceptedAt: Date.now(), doneAt: 0, failedAt: 0 }]); setUi((p) => ({ ...p, nqTitle: "", nqGiver: "", nqLoc: "", nqRew: "" })); }, btnPrimary))),
         h("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-3" }, vis.map((q) => h("div", { key: q.id, className: sub },
           h("div", { className: "flex flex-wrap items-center gap-2" }, Fld("qt" + q.id, q.title, (v) => qUp(q.id, { title: v }), { cls: `${inp} flex-1` }), Sel(q.category, Q_CATS.map((k) => [k, k]), (v) => qUp(q.id, { category: v })), Sel(q.status, Q_STATES.map((k) => [k, k]), (v) => qStatus(q, v))),
-          h("div", { className: "flex flex-wrap gap-2" }, Fld("qg" + q.id, q.giver || "", (v) => qUp(q.id, { giver: v }), { cls: `${inp} w-36`, ph: "Auftraggeber" }), Fld("ql" + q.id, q.location || "", (v) => qUp(q.id, { location: v }), { cls: `${inp} w-36`, ph: "Ort" }), Fld("qr" + q.id, q.rewardPreview || "", (v) => qUp(q.id, { rewardPreview: v }), { cls: `${inp} flex-1`, ph: "Belohnung" })),
+          h("div", { className: "flex flex-wrap gap-2" }, Fld("qg" + q.id, q.giver || "", (v) => qUp(q.id, { giver: v }), { cls: `${inp} w-36`, ph: "Auftraggeber" }), Fld("ql" + q.id, q.location || "", (v) => qUp(q.id, { location: v }), { cls: `${inp} w-36`, ph: "Ort" }), Fld("qr" + q.id, q.rewardPreview || "", (v) => qUp(q.id, { rewardPreview: v }), { cls: `${inp} flex-1`, ph: "Belohnung" }), Fld("qrg" + q.id, String(q.rewardGp || 0), (v) => qUp(q.id, { rewardGp: Math.max(0, num(v)) }), { cls: `${inp} w-20`, type: "number", ph: "Gold (GM)" })),
           Fld("qn" + q.id, q.publicNotes || "", (v) => qUp(q.id, { publicNotes: v }), { ph: "Öffentliche Notizen", area: true }),
           h("div", { className: "border border-amber-700/40 rounded-lg p-2 bg-amber-950/10" }, lbl("DM-Geheimnisse"), Fld("qs" + q.id, q.dmSecrets || "", (v) => qUp(q.id, { dmSecrets: v }), { area: true })),
-          h("div", { className: "flex gap-2" }, Btn(q.visible ? "Vor Spielern verbergen" : "Für Spieler freigeben", () => qUp(q.id, q.visible ? { visible: false } : { visible: true, acceptedAt: Date.now() }), q.visible ? btnGhost : btnPrimary), Btn("Löschen", () => setQuests((x) => A(x).filter((y) => y.id !== q.id)), btnDanger)))))) : null,
+          h("div", { className: "flex flex-wrap gap-2" }, q.status === "Erledigt" && num(q.rewardGp) > 0 && !q.rewardPaid && Btn(`${q.rewardGp} GM an Gruppenkasse auszahlen`, () => { if (partyChar && moveGp(partyChar.id, num(q.rewardGp), `Quest-Belohnung: ${q.title}`, "DM")) qUp(q.id, { rewardPaid: true }); }, btnPrimary), Btn(q.visible ? "Vor Spielern verbergen" : "Für Spieler freigeben", () => qUp(q.id, q.visible ? { visible: false } : { visible: true, acceptedAt: Date.now() }), q.visible ? btnGhost : btnPrimary), Btn("Löschen", () => setQuests((x) => A(x).filter((y) => y.id !== q.id)), btnDanger)))))) : null,
       !dm && h("div", { className: "grid grid-cols-1 lg:grid-cols-3 gap-4" }, col("Hauptquests", "Hauptquest"), col("Nebenquests", "Fraktionsauftrag"), col("Tavernen-Gerüchte", "Gerücht")),
       h("div", { className: sub }, lbl("Gemeinsames Notizfeld der Gruppe (speichert beim Verlassen des Feldes)"), Fld("shared", cm.sharedNotes, (v) => setCM({ sharedNotes: v }), { area: true, rows: 6, ph: "Eigene Ermittlungen, Spuren, Theorien …" })));
   };
@@ -3600,6 +3664,8 @@ function App() {
   };
   const approveDays = (p) => {
     const n = p.pendingDays || 0; const prog = Math.min(p.totalCostGp * 100, (p.progressCp || 0) + n * (p.gpPerDay || 10) * 100); const done = prog >= p.totalCostGp * 100;
+    const spendGp = Math.ceil((prog - (p.progressCp || 0)) / 100);
+    if (spendGp > 0 && !moveGp(p.charId, -spendGp, `Crafting: ${p.itemName}`, "DM")) return;
     pUp(p.id, { pendingDays: 0, daysInvested: (p.daysInvested || 0) + n, progressCp: prog, status: done ? "Abgeschlossen" : "Laufend" });
     addLog(cname(p.charId), "dm_event", `${done ? "Fertiggestellt" : "Fortschritt"}: ${p.itemName}`, `${n} Tage`, "DM"); notify(done ? `${p.itemName} ist fertig!` : "Fortschritt abgesegnet.");
   };
@@ -3613,8 +3679,8 @@ function App() {
         !dm && p.approved && p.status === "Laufend" && h("div", { className: "flex gap-2 items-center" }, h("input", { type: "number", min: "1", className: `${inp} w-16`, value: uv("inv_" + p.id, "1"), onChange: (e) => su("inv_" + p.id, e.target.value) }), Btn("Tage investieren", () => investDays(p), btnPrimary, { disabled: dtOf(meId) < 1 })),
         dm && h("div", { className: "space-y-2" },
           h("div", { className: "flex flex-wrap items-center gap-2" }, lbl("SG"), Fld("dc" + p.id, String(p.dc || 0), (v) => pUp(p.id, { dc: num(v) }), { cls: `${inp} w-16`, type: "number" }), lbl("GM/Tag"), Fld("gr" + p.id, String(p.gpPerDay || 10), (v) => pUp(p.id, { gpPerDay: Math.max(1, num(v)) }), { cls: `${inp} w-16`, type: "number" })),
-          h("div", { className: "flex flex-wrap gap-2" }, !p.approved && Btn("Projekt genehmigen", () => pUp(p.id, { approved: true }), btnPrimary), p.pendingDays > 0 && Btn(`${p.pendingDays} Tage absegnen`, () => approveDays(p), btnPrimary), p.pendingDays > 0 && Btn("Tage ablehnen (erstatten)", () => { setCharacters((l) => l.map((c) => c.id === p.charId ? { ...c, downtimeDays: (c.downtimeDays || 0) + p.pendingDays } : c)); pUp(p.id, { pendingDays: 0 }); }, btnDanger), Btn("Löschen", () => setCraftingProjects((l) => A(l).filter((x) => x.id !== p.id)), btnDanger)))); };
-    return h("div", { className: panelBox }, Head(Hammer, "Downtime & Crafting", dm ? "DM: Tage vergeben, Projekte prüfen, Rezepte pflegen" : `Deine Auszeit-Projekte – ${dtOf(meId)} Downtime-Tage verfügbar`),
+          h("div", { className: "flex flex-wrap gap-2" }, !p.approved && Btn("Projekt genehmigen", () => pUp(p.id, { approved: true }), btnPrimary), p.pendingDays > 0 && Btn(`${p.pendingDays} Tage absegnen (−${Math.ceil(Math.min(p.totalCostGp * 100 - (p.progressCp || 0), p.pendingDays * (p.gpPerDay || 10) * 100) / 100)} GM von ${cname(p.charId)}, hat ${gpOf(p.charId)} GM)`, () => approveDays(p), btnPrimary), p.pendingDays > 0 && Btn("Tage ablehnen (erstatten)", () => { setCharacters((l) => l.map((c) => c.id === p.charId ? { ...c, downtimeDays: (c.downtimeDays || 0) + p.pendingDays } : c)); pUp(p.id, { pendingDays: 0 }); }, btnDanger), Btn("Löschen", () => setCraftingProjects((l) => A(l).filter((x) => x.id !== p.id)), btnDanger)))); };
+    return h("div", { className: panelBox }, Head(Hammer, "Downtime & Crafting", dm ? "DM: Tage vergeben, Projekte prüfen, Rezepte pflegen" : `Deine Auszeit-Projekte – ${dtOf(meId)} Downtime-Tage verfügbar · ${gpOf(meId)} GM auf deinem Konto (Kosten werden bei Freigabe abgebucht)`),
       dm && h("div", { className: "space-y-3" },
         h("div", { className: sub }, lbl("Downtime-Tage vergeben"), h("div", { className: "flex flex-wrap items-center gap-2" }, Sel(uv("dgTarget", "all"), [["all", "Gesamte Gruppe"], ...pcs.map((c) => [c.id, `${c.name} (${c.downtimeDays || 0} Tage)`])], (v) => su("dgTarget", v)), TI("dgDays", "Tage", `${inp} w-20`), Btn("Vergeben", () => giveDt(uv("dgTarget", "all") === "all" ? pcs.map((c) => c.id) : [uv("dgTarget")], num(uv("dgDays"))), btnPrimary))),
         h("div", { className: sub }, lbl("Rezepte & Voraussetzungen"), h("div", { className: "flex flex-wrap gap-2" }, TI("nrcName", "Gegenstand"), Sel(uv("nrcType", CRAFT_TYPES[0]), CRAFT_TYPES.map((k) => [k, k]), (v) => su("nrcType", v)), TI("nrcCost", "GM", `${inp} w-20`), TI("nrcReq", "Voraussetzung (z. B. Schmiedewerkzeug)"), Btn("Rezept anlegen", () => { if (!uv("nrcName").trim()) return; setCM({ recipes: [...cm.recipes, { id: uid("rc"), name: uv("nrcName").trim(), type: uv("nrcType", CRAFT_TYPES[0]), costGp: Math.max(1, num(uv("nrcCost"))), prereq: uv("nrcReq") }] }); setUi((p) => ({ ...p, nrcName: "", nrcCost: "", nrcReq: "" })); }, btnPrimary)),
@@ -3637,8 +3703,8 @@ function App() {
   const lvlOf = (f) => (tplF(f.templateId) || { levels: [] }).levels[f.level - 1] || {};
   const dcost = (n, d) => Math.max(0, Math.round(num(n) * (100 - d) / 100));
   const err = (m) => notify(m, "error");
-  const canPay = (g, p) => { if (G.gold < g) { err(`Zu wenig Gold (${g} GM nötig).`); return false; } if (G.bastionPoints < p) { err(`Zu wenig BP (${p} nötig).`); return false; } return true; };
-  const pay = (m, g, p) => ({ ...m, globalState: { ...m.globalState, gold: m.globalState.gold - g, bastionPoints: m.globalState.bastionPoints - p } });
+  const canPay = (g, p, why) => { if (g > 0 && !partyChar) { err("Keine Gruppenkasse vorhanden."); return false; } if (partyGp < g) { err(`Zu wenig Gold in der Gruppenkasse (${g} GM nötig, ${partyGp} vorhanden).`); return false; } if (G.bastionPoints < p) { err(`Zu wenig BP (${p} nötig).`); return false; } return !g || moveGp(partyChar.id, -g, `Bastion: ${why || "Ausgabe"}`, dm ? "DM" : "Spieler"); };
+  const pay = (m, g, p) => ({ ...m, globalState: { ...m.globalState, bastionPoints: m.globalState.bastionPoints - p } });
   const bS = (b) => {
     const tier = TIERS[clamp(num(b.tier) || 1, 1, 4)]; const act = b.facilities.filter((f) => f.status === "active" && f.level > 0);
     const sum = (k) => act.reduce((s, f) => s + num(lvlOf(f)[k]), 0);
@@ -3658,13 +3724,13 @@ function App() {
   const buildFac = (b, tid) => {
     const t = tplF(tid), st = bS(b); if (!t || !t.levels.length) return err("Vorlage wählen.");
     if (b.facilities.length >= num(b.maxSlots)) return err("Keine freien Slots."); if (st.maxLvl < 1) return err("Bastionsstufe zu niedrig.");
-    const l = t.levels[0], g = dcost(l.gold, st.disc), p = dcost(l.bp, st.disc); if (!canPay(g, p)) return;
+    const l = t.levels[0], g = dcost(l.gold, st.disc), p = dcost(l.bp, st.disc); if (!canPay(g, p, `${b.name}: ${t.name} bauen`)) return;
     bmUp((m) => pay({ ...m, bastions: m.bastions.map((x) => x.id === b.id ? { ...x, facilities: [...x.facilities, { id: uid("fac"), templateId: tid, name: t.name, level: 0, targetLevel: 1, status: "building", upgradeTurnsRemaining: num(l.turns) || 1, currentOrder: null, extraOrder: null }] } : x) }, g, p));
     notify(`${t.name}: Bau in Warteschlange (${num(l.turns) || 1} Rd.).`);
   };
   const upFac = (b, f) => {
     const t = tplF(f.templateId), st = bS(b), nl = f.level + 1; if (!t || nl > t.levels.length || nl > st.maxLvl) return err("Max. Stufe für diese Bastion erreicht.");
-    const l = t.levels[nl - 1], g = dcost(l.gold, st.disc), p = dcost(l.bp, st.disc); if (!canPay(g, p)) return;
+    const l = t.levels[nl - 1], g = dcost(l.gold, st.disc), p = dcost(l.bp, st.disc); if (!canPay(g, p, `${b.name}: ${f.name} auf Stufe ${nl}`)) return;
     bmUp((m) => pay({ ...m, bastions: m.bastions.map((x) => x.id === b.id ? { ...x, facilities: x.facilities.map((y) => y.id === f.id ? { ...y, targetLevel: nl, status: "building", upgradeTurnsRemaining: num(l.turns) || 1 } : y) } : x) }, g, p));
     notify(`Ausbau auf Stufe ${nl} in Warteschlange.`);
   };
@@ -3686,7 +3752,7 @@ function App() {
       const c = tplC(tid); if (!c || G.unlockedBlueprints.includes(c.id)) return err("Unerforschte Blaupause wählen."); if (!num(lv.bpBonus)) return err("Forschen nur in Bibliotheken.");
       p = num(c.researchBp); order = { type, targetId: c.id, label: `${c.name} erforschen`, turnsRemaining: num(c.researchTurns) || 1 };
     } else order = { type: "trade", targetId: "", label: "Handeln / Sammeln", turnsRemaining: 1 };
-    if (!canPay(g, p)) return;
+    if (!canPay(g, p, `${b.name}: ${order.label}`)) return;
     bmUp((m) => {
       const mm = pay({ ...m }, g, p); let used = false;
       if (ing) mm.globalState = { ...mm.globalState, storageInventory: mm.globalState.storageInventory.map((i) => !used && i.name === ing && num(i.qty) > 0 ? (used = true, { ...i, qty: num(i.qty) - 1 }) : i).filter((i) => num(i.qty) > 0) };
@@ -3695,7 +3761,7 @@ function App() {
     notify(`Befehl erteilt: ${order.label}`);
   };
   const startTier = (b) => {
-    const to = num(b.tier) + 1; if (to > 4 || b.tierUp) return err("Kein Aufstieg möglich."); const u = TIERS[to].up; if (!canPay(u.gold, u.bp)) return;
+    const to = num(b.tier) + 1; if (to > 4 || b.tierUp) return err("Kein Aufstieg möglich."); const u = TIERS[to].up; if (!canPay(u.gold, u.bp, `${b.name}: Aufstieg auf Stufe ${to}`)) return;
     bmUp((m) => pay({ ...m, bastions: m.bastions.map((x) => x.id === b.id ? { ...x, tierUp: { to, turnsRemaining: u.turns } } : x) }, u.gold, u.bp)); notify(`Aufstieg auf Stufe ${to} gestartet.`);
   };
   const sendMission = (b) => {
@@ -3704,8 +3770,8 @@ function App() {
     if (!st.exped) return err("Kommandobrücke/Kriegsraum Stufe 2+ nötig."); if (n > avail) return err(`Nur ${avail} Squad(s) verfügbar.`);
     bmB(b.id, (x) => ({ ...x, missions: [...x.missions, { id: uid("ms"), label: uv("ms_l_" + b.id) || "Expedition", unitTemplateId: unitId, squads: n, turnsRemaining: turns }] })); notify("Mission gestartet.");
   };
-  const buyFuel = (b) => { const a = b.airshipStats, q = clamp(num(uv("fuelQ_" + b.id, "10")), 1, Math.max(1, num(a.maxFuel) - num(a.fuel))), cost = q * num(G.fuelPrice); if (num(a.fuel) >= num(a.maxFuel)) return err("Tank ist voll."); if (!canPay(cost, 0)) return; bmUp((m) => pay({ ...m, bastions: m.bastions.map((x) => x.id === b.id ? { ...x, airshipStats: { ...x.airshipStats, fuel: Math.min(num(x.airshipStats.maxFuel), num(x.airshipStats.fuel) + q) } } : x) }, cost, 0)); notify(`${q} Treibstoff nachgekauft.`); };
-  const repairShip = (b) => { const a = b.airshipStats, hp = clamp(Math.round(num(uv("repQ_" + b.id, "10")) / 10) * 10, 10, Math.max(10, num(a.maxHullHp) - num(a.hullHp))), k = hp / 10, g = k * num(G.repairGold), p = k * num(G.repairBp); if (num(a.hullHp) >= num(a.maxHullHp)) return err("Hülle ist intakt."); if (!canPay(g, p)) return; bmUp((m) => pay({ ...m, bastions: m.bastions.map((x) => x.id === b.id ? { ...x, airshipStats: { ...x.airshipStats, hullHp: Math.min(num(x.airshipStats.maxHullHp), num(x.airshipStats.hullHp) + hp) } } : x) }, g, p)); notify(`Reparatur: +${hp} Hülle.`); };
+  const buyFuel = (b) => { const a = b.airshipStats, q = clamp(num(uv("fuelQ_" + b.id, "10")), 1, Math.max(1, num(a.maxFuel) - num(a.fuel))), cost = q * num(G.fuelPrice); if (num(a.fuel) >= num(a.maxFuel)) return err("Tank ist voll."); if (!canPay(cost, 0, `${b.name}: Treibstoff`)) return; bmUp((m) => pay({ ...m, bastions: m.bastions.map((x) => x.id === b.id ? { ...x, airshipStats: { ...x.airshipStats, fuel: Math.min(num(x.airshipStats.maxFuel), num(x.airshipStats.fuel) + q) } } : x) }, cost, 0)); notify(`${q} Treibstoff nachgekauft.`); };
+  const repairShip = (b) => { const a = b.airshipStats, hp = clamp(Math.round(num(uv("repQ_" + b.id, "10")) / 10) * 10, 10, Math.max(10, num(a.maxHullHp) - num(a.hullHp))), k = hp / 10, g = k * num(G.repairGold), p = k * num(G.repairBp); if (num(a.hullHp) >= num(a.maxHullHp)) return err("Hülle ist intakt."); if (!canPay(g, p, `${b.name}: Reparatur`)) return; bmUp((m) => pay({ ...m, bastions: m.bastions.map((x) => x.id === b.id ? { ...x, airshipStats: { ...x.airshipStats, hullHp: Math.min(num(x.airshipStats.maxHullHp), num(x.airshipStats.hullHp) + hp) } } : x) }, g, p)); notify(`Reparatur: +${hp} Hülle.`); };
   const loseSquads = (b, n) => { let gar = b.garrison.map((g) => ({ ...g })); for (let i = 0; i < n; i++) { if (!gar.length) break; const gi = gar.reduce((bi, g, j) => num(g.squadCount) > num(gar[bi].squadCount) ? j : bi, 0); gar[gi].squadCount -= 1; gar[gi].headcount = Math.max(0, num(gar[gi].headcount) - num(G.squadSize)); gar = gar.filter((g) => num(g.squadCount) > 0); } return gar; };
   const rollEvt = (secret, bid, tplId) => {
     const roll = 1 + Math.floor(Math.random() * 100); const list = [...TP.events].sort((a, b) => num(a.upTo) - num(b.upTo)); const ev = tplId ? TP.events.find((e) => e.id === tplId) : (list.find((e) => roll <= num(e.upTo)) || list[list.length - 1]);
@@ -3713,17 +3779,18 @@ function App() {
     bmUp((m) => {
       const g = { ...m.globalState }; let bs = m.bastions; const fx = [];
       if (auto) {
-        if (num(ev.gold)) { g.gold = Math.max(0, g.gold + num(ev.gold)); fx.push(`${num(ev.gold) > 0 ? "+" : ""}${ev.gold} GM`); } if (num(ev.bp)) { g.bastionPoints = Math.max(0, g.bastionPoints + num(ev.bp)); fx.push(`${num(ev.bp) > 0 ? "+" : ""}${ev.bp} BP`); }
+        if (num(ev.gold)) { fx.push(`${num(ev.gold) > 0 ? "+" : ""}${ev.gold} GM`); } if (num(ev.bp)) { g.bastionPoints = Math.max(0, g.bastionPoints + num(ev.bp)); fx.push(`${num(ev.bp) > 0 ? "+" : ""}${ev.bp} BP`); }
         if (bid) bs = bs.map((b) => { if (b.id !== bid) return b; const nb = { ...b }; if (num(ev.hull) && nb.airshipStats) { const a = nb.airshipStats; nb.airshipStats = { ...a, hullHp: clamp(num(a.hullHp) + num(ev.hull), 0, num(a.maxHullHp)) }; fx.push(`${num(ev.hull) > 0 ? "+" : ""}${ev.hull} Hülle`); } if (num(ev.troops) < 0) { nb.garrison = loseSquads(nb, -num(ev.troops)); fx.push(`${ev.troops} Squads`); } return nb; });
       }
       g.eventLog = [{ id: uid("ev"), text: `${tplId ? "Manuell" : "W100 " + roll} – ${ev.title}: ${ev.text}${fx.length ? ` [${fx.join(", ")}]` : ""}`, time: stamp(), secret: !!secret }, ...g.eventLog].slice(0, 60);
       return { ...m, globalState: g, bastions: bs };
     });
+    if (auto && num(ev.gold) && partyChar) moveGp(partyChar.id, Math.max(-partyGp, num(ev.gold)), `Bastions-Ereignis: ${ev.title}`, "DM");
     if (!secret) addLog("Bastionen", "dm_event", `Bastions-Ereignis: ${ev.title}`, tplId ? "manuell" : `W100 ${roll}`, "DM");
     notify(`${tplId ? "Ereignis" : "W100 " + roll}: ${ev.title}${secret ? " (geheim)" : ""}`);
   };
   const evalRound = () => {
-    const m = SYNC_NORMALIZERS.bastionModule(bastionModule); const g0 = m.globalState; let gold = g0.gold, bp = g0.bastionPoints; const unlocked = [...g0.unlockedBlueprints]; let inv = [...g0.storageInventory]; const out = []; const ss = num(g0.squadSize) || 5;
+    const m = SYNC_NORMALIZERS.bastionModule(bastionModule); const g0 = m.globalState; const gold0 = partyGp; let gold = gold0, bp = g0.bastionPoints; const unlocked = [...g0.unlockedBlueprints]; let inv = [...g0.storageInventory]; const out = []; const ss = num(g0.squadSize) || 5;
     const bastions = m.bastions.map((b0) => {
       const b = { ...b0 }; const st = bS(b); const nm = b.name; bp += st.bp; out.push(`${nm}: +${st.bp} BP`);
       if (st.sold > 0) { if (gold >= st.sold) { gold -= st.sold; b.unpaid = 0; out.push(`${nm}: Sold ${st.sold} GM`); } else { b.unpaid = num(b.unpaid) + 1; out.push(`⚠ ${nm}: Sold (${st.sold} GM) nicht bezahlbar – Moral sinkt (${b.unpaid}. Runde)`); if (b.unpaid >= 2) { b.garrison = loseSquads(b, 1); out.push(`⚠ ${nm}: ein Squad desertiert`); } } }
@@ -3745,7 +3812,8 @@ function App() {
       return b;
     });
     const turn = g0.turnCounter;
-    setBastionModule({ ...m, touched: { ...m.touched, bp: true }, globalState: { ...g0, gold, bastionPoints: bp, turnCounter: turn + 1, unlockedBlueprints: unlocked, storageInventory: inv, eventLog: [{ id: uid("ev"), text: `Runde ${turn}: ${out.join("; ") || "nichts passiert"}`, time: stamp(), secret: false }, ...g0.eventLog].slice(0, 60) }, bastions });
+    setBastionModule({ ...m, touched: { ...m.touched, bp: true }, globalState: { ...g0, bastionPoints: bp, turnCounter: turn + 1, unlockedBlueprints: unlocked, storageInventory: inv, eventLog: [{ id: uid("ev"), text: `Runde ${turn}: ${out.join("; ") || "nichts passiert"}`, time: stamp(), secret: false }, ...g0.eventLog].slice(0, 60) }, bastions });
+    if (partyChar && gold !== gold0) moveGp(partyChar.id, gold - gold0, `Bastions-Runde ${turn}: Sold & Handel`, "DM");
     addLog("Bastionen", "dm_event", `Bastions-Runde ${turn} ausgewertet`, `${out.length} Meldungen`, "DM"); notify(`Bastions-Runde ${turn} ausgewertet.`);
     if (uv("rndEvent", false)) rollEvt(false, uv("bmSel", ""));
   };
@@ -3789,14 +3857,15 @@ function App() {
         st.exped ? h("div", { className: "flex flex-wrap gap-2 items-center" }, Sel(uv("ms_u_" + b.id, (TP.units[0] || {}).id || ""), TP.units.map((u) => [u.id, u.name]), (v) => su("ms_u_" + b.id, v)), TI("ms_n_" + b.id, "Squads", `${inp} w-20`), TI("ms_t_" + b.id, "Runden", `${inp} w-20`), TI("ms_l_" + b.id, "Missionsziel"), Btn("Mission starten", () => sendMission(b), btnPrimary)) : h("div", { className: "text-[11px] text-slate-500" }, "Missionen: Kommandobrücke/Kriegsraum Stufe 2+ nötig.")));
   };
   const renderBastionen = () => {
-    const [tab, tabs] = dm ? SubTabs("bmTab", "main", [["main", "Bastionen"], ["round", "DM: Runde & Ereignisse"], ["bast", "DM: Bastionen verwalten"], ["tpl", "DM: Vorlagen-Editor"]]) : ["main", null];
-    const selId = uv("bmSel", ""); const sel = bm.bastions.find((b) => b.id === selId) || bm.bastions[0];
-    const pool = h("div", { className: "flex gap-4 text-right" }, h("div", null, h("div", { className: "text-lg font-extrabold text-amber-300" }, `${G.gold} GM`), lbl("Gold")), h("div", null, h("div", { className: "text-lg font-extrabold text-cyan-300" }, `${G.bastionPoints} BP`), lbl("Bastionspunkte")), h("div", null, h("div", { className: "text-lg font-extrabold text-slate-200" }, `Rd. ${G.turnCounter}`), lbl("Runde")));
+    const tab = dm ? uv("bmTab", "main") : "main";
+    const visB = bm.bastions.filter((b) => dm || !A(b.owners).length || A(b.owners).includes(meId));
+    const selId = uv("bmSel", ""); const sel = visB.find((b) => b.id === selId) || visB[0];
+    const pool = h("div", { className: "flex gap-4 text-right" }, h("div", null, h("div", { className: "text-lg font-extrabold text-amber-300" }, `${partyGp} GM`), lbl("Gruppenkasse")), h("div", null, h("div", { className: "text-lg font-extrabold text-cyan-300" }, `${G.bastionPoints} BP`), lbl("Bastionspunkte")), h("div", null, h("div", { className: "text-lg font-extrabold text-slate-200" }, `Rd. ${G.turnCounter}`), lbl("Runde")));
     const logList = G.eventLog.filter((e) => dm || !e.secret);
     const dmRound = h("div", { className: "space-y-4" },
       h("div", { className: sub }, h("div", { className: "flex flex-wrap items-center gap-3" }, Btn("Bastions-Runde auswerten", evalRound, btnPrimary), Chk("Ereignis mitwürfeln", uv("rndEvent", false), (v) => su("rndEvent", v)), Chk("Auswirkungen automatisch anwenden", uv("evAuto", true), (v) => su("evAuto", v)), Chk("Ereignis geheim", uv("evSecret", false), (v) => su("evSecret", v))),
         h("div", { className: "flex flex-wrap items-center gap-2" }, Btn("W100-Ereignis würfeln", () => rollEvt(uv("evSecret", false), sel && sel.id)), Sel(uv("evManual", (TP.events[0] || {}).id || ""), TP.events.map((e) => [e.id, e.title]), (v) => su("evManual", v)), Btn("Manuell auslösen", () => rollEvt(uv("evSecret", false), sel && sel.id, uv("evManual", (TP.events[0] || {}).id)))), lbl("Ereignis-Auswirkungen auf Hülle/Truppen betreffen die oben gewählte Bastion.")),
-      h("div", { className: sub }, lbl("Gruppen-Pool & Regelwerte"), h("div", { className: "flex flex-wrap gap-2" }, [["gold", "Gold"], ["bastionPoints", "BP"], ["turnCounter", "Runde"], ["squadSize", "Squad-Größe"], ["fuelPrice", "Treibstoffpreis"], ["repairGold", "Reparatur GM/10HP"], ["repairBp", "Reparatur BP/10HP"]].map(([k, l]) => h("label", { key: k, className: "text-[11px] text-slate-500 flex flex-col" }, l, Fld("g" + k, String(G[k]), (v) => bmG({ [k]: num(v) }), { cls: `${inp} w-24`, type: "number" }))))),
+      h("div", { className: sub }, lbl("Bastionspunkte & Regelwerte (Gold kommt aus der Gruppenkasse unter „Finanzen & Shops“)"), h("div", { className: "flex flex-wrap gap-2" }, [["bastionPoints", "BP"], ["turnCounter", "Runde"], ["squadSize", "Squad-Größe"], ["fuelPrice", "Treibstoffpreis"], ["repairGold", "Reparatur GM/10HP"], ["repairBp", "Reparatur BP/10HP"]].map(([k, l]) => h("label", { key: k, className: "text-[11px] text-slate-500 flex flex-col" }, l, Fld("g" + k, String(G[k]), (v) => bmG({ [k]: num(v) }), { cls: `${inp} w-24`, type: "number" }))))),
       h("div", { className: sub }, lbl("Lager / Inventar"), G.storageInventory.map((i) => h("div", { key: i.id, className: "flex items-center gap-2 text-xs text-slate-200" }, Fld("si" + i.id, i.name, (v) => bmG({ storageInventory: G.storageInventory.map((x) => x.id === i.id ? { ...x, name: v } : x) }), { cls: `${inp} flex-1` }), Fld("sq" + i.id, String(i.qty), (v) => bmG({ storageInventory: G.storageInventory.map((x) => x.id === i.id ? { ...x, qty: num(v) } : x) }), { cls: `${inp} w-16`, type: "number" }), Btn("✕", () => bmG({ storageInventory: G.storageInventory.filter((x) => x.id !== i.id) }), btnDanger))),
         h("div", { className: "flex gap-2" }, TI("niName", "Gegenstand / Spezialzutat"), TI("niQty", "Menge", `${inp} w-20`), Btn("Hinzufügen", () => { if (!uv("niName").trim()) return; bmG({ storageInventory: [...G.storageInventory, { id: uid("inv"), name: uv("niName").trim(), qty: Math.max(1, num(uv("niQty", "1"))) }] }); setUi((p) => ({ ...p, niName: "", niQty: "" })); }, btnPrimary))),
       h("div", { className: sub }, lbl("Freigeschaltete Blaupausen"), h("div", { className: "flex flex-wrap gap-3" }, TP.craftables.map((c) => h("span", { key: c.id }, Chk(c.name, G.unlockedBlueprints.includes(c.id), (on) => bmUp((m) => ({ ...m, touched: { ...m.touched, bp: true }, globalState: { ...m.globalState, unlockedBlueprints: on ? [...m.globalState.unlockedBlueprints, c.id] : m.globalState.unlockedBlueprints.filter((i) => i !== c.id) } }))))))));
@@ -3804,6 +3873,7 @@ function App() {
       h("div", { className: sub }, lbl("Neue Bastion"), h("div", { className: "flex flex-wrap gap-2" }, TI("nbName", "Name"), Sel(uv("nbType", "fortress"), [["fortress", "Festung"], ["airship", "Luftschiff"], ["guildhall", "Gildenhaus"], ["ship", "Schiff"], ["other", "Sonstiges"]], (v) => su("nbType", v)), Sel(uv("nbTier", "1"), [1, 2, 3, 4].map((n) => [String(n), `Stufe ${n}`]), (v) => su("nbTier", v)), Btn("Anlegen", () => { if (!uv("nbName").trim()) return; const type = uv("nbType", "fortress"), tier = num(uv("nbTier", "1")); const nb = { id: uid("bastion"), name: uv("nbName").trim(), type, tier, maxSlots: TIERS[tier].slots, customBpBonus: 0, defenseBonus: 0, baseBpOverride: "", maxFacLevel: "", facilities: [], garrison: [], missions: [], airshipStats: type === "airship" ? { hullHp: 50, maxHullHp: 50, fuel: 100, maxFuel: 100, baseSpeed: 3, crewMinimum: 10, fuelPerDay: 10, weaponSlots: 2, weapons: [] } : null }; bmUp((m) => ({ ...m, bastions: [...m.bastions, nb] })); su("nbName", ""); su("bmSel", nb.id); }, btnPrimary))),
       bm.bastions.map((b) => h("div", { key: b.id, className: sub },
         h("div", { className: "flex flex-wrap items-end gap-2" }, Fld("bn" + b.id, b.name, (v) => bmB(b.id, { name: v }), { cls: `${inp} w-40 font-bold` }), Sel(b.type, [["fortress", "Festung"], ["airship", "Luftschiff"], ["guildhall", "Gildenhaus"], ["ship", "Schiff"], ["other", "Sonstiges"]], (v) => bmB(b.id, (x) => ({ ...x, type: v, airshipStats: v === "airship" && !x.airshipStats ? { hullHp: 50, maxHullHp: 50, fuel: 100, maxFuel: 100, baseSpeed: 3, crewMinimum: 10, fuelPerDay: 10, weaponSlots: 2, weapons: [] } : x.airshipStats }))), Sel(String(b.tier), [1, 2, 3, 4].map((n) => [String(n), `Stufe ${n}`]), (v) => bmB(b.id, { tier: num(v) })), FB(b, "maxSlots", "Slots"), FB(b, "baseBpOverride", "Basis-BP (leer=Tabelle)"), FB(b, "customBpBonus", "BP-Bonus"), FB(b, "defenseBonus", "Verteidigung"), FB(b, "maxFacLevel", "Max. Geb.-Stufe (leer=Tabelle)", "w-24"), Btn("Bastion löschen", () => { if (window.confirm(`„${b.name}“ samt Einrichtungen löschen?`)) bmUp((m) => ({ ...m, bastions: m.bastions.filter((x) => x.id !== b.id) })); }, btnDanger)),
+        h("div", { className: "flex flex-wrap items-center gap-2 border-t border-slate-800 pt-2" }, lbl("Eigentümer (leer = alle Spieler):"), pcs.map((c) => h("span", { key: c.id }, Chk(c.name, A(b.owners).includes(c.id), (on) => bmB(b.id, (x) => ({ ...x, owners: on ? [...A(x.owners), c.id] : A(x.owners).filter((i) => i !== c.id) })))))),
         b.airshipStats && h("div", { className: "flex flex-wrap items-end gap-2 border-t border-slate-800 pt-2" }, FA(b, "hullHp", "Hülle"), FA(b, "maxHullHp", "Max. Hülle"), FA(b, "fuel", "Treibstoff"), FA(b, "maxFuel", "Max. Tank"), FA(b, "baseSpeed", "Geschw."), FA(b, "crewMinimum", "Crew-Min."), FA(b, "fuelPerDay", "Verbr./Tag"), FA(b, "weaponSlots", "Waffen-Slots"),
           Sel("", [["", "+ Waffe/Modul …"], ...TP.shipWeapons.map((w) => [w.id, `${w.name} (${w.kind})`])], (v) => { const w = TP.shipWeapons.find((x) => x.id === v); if (w) bmB(b.id, (x) => ({ ...x, airshipStats: { ...x.airshipStats, weapons: [...x.airshipStats.weapons, { id: uid("w"), templateId: w.id, name: w.name }] } })); }),
           b.airshipStats.weapons.map((w) => h("span", { key: w.id, className: "text-xs text-slate-300" }, w.name, " ", Btn("✕", () => bmB(b.id, (x) => ({ ...x, airshipStats: { ...x.airshipStats, weapons: x.airshipStats.weapons.filter((y) => y.id !== w.id) } })), btnDanger)))),
@@ -3819,19 +3889,47 @@ function App() {
       TplEd("craftables", "Blaupausen / Crafting-Items (Zutat = Spezialzutat aus dem Lager)", [["name", "Name", "text", "w-44"], ["facilityId", "Gebäudetyp-ID", "text", "w-24"], ["minLevel", "Min.-Stufe", "number"], ["gold", "GM", "number"], ["turns", "Runden", "number"], ["ingredient", "Spezialzutat", "text", "w-32"], ["researchBp", "Forsch.-BP", "number"], ["researchTurns", "Forsch.-Rd.", "number"]], () => ({ id: uid("cr"), name: "Neues Item", facilityId: "", minLevel: 1, gold: 50, turns: 1, ingredient: "", researchBp: 2, researchTurns: 1 })),
       TplEd("shipWeapons", "Luftschiff-Waffen & Module", [["name", "Name", "text", "w-44"], ["kind", "Art", "text", "w-20"], ["damage", "Schaden", "text", "w-20"], ["range", "Reichweite", "text", "w-28"], ["ammo", "Munition", "text", "w-24"], ["crew", "Crew", "number"], ["gold", "GM", "number"], ["speedMod", "Geschw.-Mod.", "number"]], () => ({ id: uid("sw"), name: "Neue Waffe", kind: "Waffe", damage: "", range: "", ammo: "", crew: 1, gold: 100, speedMod: 0 })),
       TplEd("events", "Ereignistabelle (W100 bis …)", [["upTo", "W100 bis", "number"], ["title", "Titel", "text", "w-40"], ["text", "Text", "text", "w-72"], ["gold", "GM", "number"], ["bp", "BP", "number"], ["hull", "Hülle", "number"], ["troops", "Squads ±", "number"]], () => ({ id: uid("be"), upTo: 100, title: "Neues Ereignis", text: "", gold: 0, bp: 0, hull: 0, troops: 0 })));
-    return h("div", { className: panelBox }, Head(Shield, "Bastionen & Luftschiffe", `Gemeinsamer Pool · ${bm.bastions.length} Bastion(en) · ${G.unlockedBlueprints.length} Blaupause(n)`, pool), tabs,
+    return h("div", { className: panelBox }, Head(Shield, "Bastionen & Luftschiffe", `Gemeinsamer Pool · ${visB.length} Bastion(en) · ${G.unlockedBlueprints.length} Blaupause(n)`, pool),
       tab === "main" && h("div", { className: "space-y-4" },
-        h("div", { className: "flex flex-wrap gap-2" }, bm.bastions.map((b) => h("button", { key: b.id, onClick: () => su("bmSel", b.id), className: tabBtn(sel && sel.id === b.id) }, `${b.type === "airship" ? "✈ " : ""}${b.name}`))),
+        h("div", { className: "flex flex-wrap gap-2" }, visB.map((b) => h("button", { key: b.id, onClick: () => su("bmSel", b.id), className: tabBtn(sel && sel.id === b.id) }, `${b.type === "airship" ? "✈ " : ""}${b.name}`))),
         sel ? bastionView(sel) : h("p", { className: "text-sm text-slate-500" }, "Noch keine Bastion – der DM legt sie im DM-Kontrollzentrum an."),
         h("div", { className: sub }, lbl("Lager & Blaupausen"), h("div", { className: "text-xs text-slate-300" }, "Lager: " + (G.storageInventory.map((i) => `${i.name} ×${i.qty}`).join(", ") || "leer")), h("div", { className: "text-xs text-slate-300" }, "Blaupausen: " + (G.unlockedBlueprints.map((i) => (tplC(i) || {}).name).filter(Boolean).join(", ") || "keine"))),
         logList.length > 0 && h("div", { className: sub }, lbl("Ereignisse & Runden-Protokoll"), logList.map((e) => h("div", { key: e.id, className: `text-xs flex justify-between gap-2 ${/Angriff/.test(e.text) ? "text-red-300" : "text-slate-300"}` }, h("span", null, `${e.time} · ${e.secret ? "🔒 " : ""}${e.text}`), dm && Btn("✕", () => bmG({ eventLog: G.eventLog.filter((x) => x.id !== e.id) }), btnDanger))))),
       dm && tab === "round" && dmRound, dm && tab === "bast" && dmBast, dm && tab === "tpl" && dmTpl);
   };
 
-  const renderModule = (k) => k === "bastionen" ? renderBastionen() : k === "bastion" ? (dm ? renderBastionDm() : renderBastionPlayer()) : k === "factions" ? renderFactions() : k === "quests" ? renderQuests() : k === "lore" ? renderLore() : k === "downtime" ? renderDowntime() : renderPlaceholderModule(k);
+  // ---------- SPIELLEITER-PROTOKOLL ----------
+  const fmtTs = (ts) => new Date(ts).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const renderJournal = () => {
+    if (!dm) return null;
+    const fa = uv("jfActor", ""), ft = uv("jfTab", ""), fq = uv("jfQ", "").toLowerCase(), fo = uv("jfOnly", false), lim = uv("jLimit", 50);
+    const top = (e) => String(e.tab || "").split(" › ")[0];
+    const actors = [...new Set(journal.map((e) => e.actor))], tabsU = [...new Set(journal.map(top))].filter(Boolean);
+    const list = journal.filter((e) => (!fa || e.actor === fa) && (!ft || top(e) === ft) && (!fo || !e.reverted) && (!fq || JSON.stringify([e.actor, e.tab, e.title, e.details]).toLowerCase().includes(fq)));
+    const exportCsv = () => {
+      const q = (v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
+      const csv = ["Zeit;Akteur;Reiter;Aktion;Details;Status", ...list.map((e) => [fmtTs(e.ts), e.actor, e.tab, e.title, A(e.details).join(" | "), e.reverted ? "rückgängig gemacht" : "aktiv"].map(q).join(";"))].join("\r\n");
+      const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" })); a.download = "spielleiter-protokoll.csv"; a.click();
+    };
+    return h("div", { className: panelBox }, Head(Eye, "Spielleiter-Protokoll", `${journal.length} Aktionen · ${journal.filter((e) => e.reverted).length} rückgängig gemacht · alle Spieler- und DM-Aktionen`, Btn("CSV exportieren", exportCsv)),
+      h("div", { className: "flex flex-wrap items-center gap-2" }, Sel(fa, [["", "Alle Akteure"], ...actors.map((a) => [a, a])], (v) => su("jfActor", v)), Sel(ft, [["", "Alle Reiter"], ...tabsU.map((t) => [t, t])], (v) => su("jfTab", v)), TI("jfQ", "Suchen (Aktion, Details …)"), Chk("Rückgängig gemachte ausblenden", fo, (v) => su("jfOnly", v))),
+      actors.length > 0 && h("div", { className: "flex flex-wrap gap-1.5" }, actors.map((a) => h("span", { key: a }, Tag(`${a}: ${journal.filter((e) => e.actor === a).length}`)))),
+      list.length === 0 && h("p", { className: "text-sm text-slate-500" }, journal.length ? "Keine Einträge für diesen Filter." : "Noch keine Aktionen protokolliert."),
+      list.slice(0, lim).map((e) => { const open = uv("jx_" + e.id, false); const det = A(e.details);
+        return h("div", { key: e.id, className: `${sub} ${e.reverted ? "opacity-60" : ""}` },
+          h("div", { className: "flex flex-wrap items-center justify-between gap-2" },
+            h("div", { className: "flex flex-wrap items-center gap-2" }, h("span", { className: "font-mono text-[11px] text-slate-400" }, fmtTs(e.ts)), Tag(e.actor, e.role === "DM" ? "border-amber-600/50 bg-amber-950/40 text-amber-300" : "border-emerald-600/50 bg-emerald-950/40 text-emerald-300"), Tag(e.tab || "–", "border-cyan-700/50 bg-cyan-950/40 text-cyan-300"), e.reverted && Tag(`rückgängig gemacht${e.revertedAt ? " · " + fmtTs(e.revertedAt) : ""}`, "border-red-700/50 bg-red-950/40 text-red-300")),
+            h("div", { className: "flex flex-wrap gap-1.5" }, !e.reverted && Btn(e.undoOf ? "Wiederherstellen" : "Rückgängig", () => handleUndoJournal(e), btnPrimary), Btn("Ab hier zurückrollen", () => handleRollbackFrom(e), btnDanger))),
+          h("div", { className: `text-sm font-semibold text-white ${e.reverted ? "line-through" : ""}` }, e.title),
+          det.length > 0 && h("div", { className: "space-y-0.5" }, (open ? det : det.slice(0, 3)).map((d, i) => h("div", { key: i, className: "text-[11px] text-slate-400 break-words" }, "• " + d)), det.length > 3 && Btn(open ? "Weniger anzeigen" : `Alle ${det.length} Details anzeigen`, () => su("jx_" + e.id, !open))));
+      }),
+      list.length > lim && Btn(`Mehr anzeigen (${list.length - lim} weitere)`, () => su("jLimit", lim + 50)));
+  };
+
+  const renderModule = (k) => k === "bastionen" ? renderBastionen() : k === "journal" ? renderJournal() : k === "factions" ? renderFactions() : k === "quests" ? renderQuests() : k === "lore" ? renderLore() : k === "downtime" ? renderDowntime() : renderPlaceholderModule(k);
   const weekBanner = dm && cal.weekReminder && h("div", { className: "mb-4 bg-amber-950/40 border border-amber-500/50 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3" },
     h("div", { className: "text-sm text-amber-200 font-semibold" }, "⏳ 7 Ingame-Tage sind vergangen – Lebenshaltungskosten einziehen oder Bastions-Runde auslösen?"),
-    h("div", { className: "flex flex-wrap gap-2" }, Btn("Lebenshaltung einziehen", collectUpkeep, btnPrimary), Btn("Bastions-Runde auslösen", runBastionRound, btnPrimary), Btn("Später", () => setCM({ calendar: { ...cal, weekReminder: false } }))));
+    h("div", { className: "flex flex-wrap gap-2" }, Btn("Lebenshaltung einziehen", collectUpkeep, btnPrimary), Btn("Bastions-Runde auslösen", evalRound, btnPrimary), Btn("Später", () => setCM({ calendar: { ...cal, weekReminder: false } }))));
 
   const renderPlaceholderModule = (moduleKey) => {
     const info = PLACEHOLDER_INFO[moduleKey];
@@ -4013,6 +4111,41 @@ function App() {
   // 2. EINGELOGGTE ANSICHT (ENTWEDER SPIELER-MODUS ODER DM-ZENTRALE)
   // =========================================================================
   const isDm = authMode === "dm";
+  const sec = (!isDm && (mainSection === "journal" || mainSection === "__settings")) ? "finances" : mainSection;
+  const NAV = CAMPAIGN_TABS.filter((t) => !t.dmOnly || isDm);
+  const mk = (id, label, on, go) => ({ id, label, on, go });
+  const subsOf = (id) => {
+    if (id === "finances") return isDm
+      ? DM_FINANCE_TABS.map((t) => mk(t.id, t.label, dmFinanceTab === t.id, () => setDmFinanceTab(t.id)))
+      : [...shopTabs.map((t) => mk(t.id, t.name, activeTabId === t.id, () => setPlayerFinanceTab(t.id))), ...SPECIAL_PLAYER_TABS.map((t) => mk(t.id, t.label, activeTabId === t.id, () => setPlayerFinanceTab(t.id)))];
+    if (id === "inventory") return isDm
+      ? [mk("create_grant", "Beute & Items vergeben", dmInvSubTab === "create_grant", () => setDmInvSubTab("create_grant")), mk("party_inspect", "Gruppen-Inventare prüfen", dmInvSubTab === "party_inspect", () => setDmInvSubTab("party_inspect"))]
+      : [mk("personal", "Mein Rucksack", playerInvSubTab === "personal", () => setPlayerInvSubTab("personal")), partyChar && mk("party_wagon", "Gruppenwagen", playerInvSubTab === "party_wagon", () => setPlayerInvSubTab("party_wagon")), bagOfHolding.enabled && mk("bag_of_holding", "Nimmervoller Beutel", playerInvSubTab === "bag_of_holding", () => setPlayerInvSubTab("bag_of_holding"))].filter(Boolean);
+    if (id === "bastionen" && isDm) return [["main", "Übersicht"], ["round", "Runde & Ereignisse"], ["bast", "Bastionen verwalten"], ["tpl", "Vorlagen-Editor"]].map(([k, l]) => mk(k, l, uv("bmTab", "main") === k, () => su("bmTab", k)));
+    return [];
+  };
+  const activeNav = NAV.find((t) => t.id === sec); const activeSub = subsOf(sec).find((x) => x.on);
+  jr.current.ctx.tab = (sec === "__settings" ? "Allgemeine Einstellungen" : activeNav ? activeNav.label : sec) + (activeSub ? " › " + activeSub.label : "");
+  const goMain = (id) => {
+    const has = subsOf(id).length > 0;
+    if (sec === id && has) setOpenNav(openNav === id ? null : id);
+    else { setMainSection(id); setOpenNav(has ? id : null); if (!has) setNavOpenMobile(false); }
+  };
+  const navBtn = (on) => `w-full text-left px-3 py-2 rounded-xl text-sm font-semibold transition flex items-center gap-2 border ${on ? (isDm ? "bg-amber-500/20 border-amber-500 text-amber-200" : "bg-emerald-500/20 border-emerald-500 text-emerald-200") : "bg-slate-900/60 border-slate-800 text-slate-300 hover:text-white hover:border-slate-600"}`;
+  const sidebar = React.createElement("aside", { className: `${navOpenMobile ? "block" : "hidden"} md:block w-full md:w-64 lg:w-72 shrink-0 md:sticky md:top-[76px] md:self-start md:max-h-[calc(100vh-76px)] md:overflow-y-auto border-b md:border-b-0 md:border-r border-slate-800 bg-slate-950/90 p-3 space-y-1.5` },
+    NAV.map(({ id, label, Icon }) => {
+      const active = sec === id; const subs = subsOf(id); const open = openNav === id && subs.length > 0;
+      return React.createElement("div", { key: id },
+        React.createElement("button", { onClick: () => goMain(id), className: navBtn(active) },
+          React.createElement(Icon, { className: `w-4 h-4 shrink-0 ${active ? (isDm ? "text-amber-400" : "text-emerald-400") : "text-slate-500"}` }),
+          React.createElement("span", { className: "flex-1 leading-tight" }, label),
+          id === "finances" && isDm && pendingRequests.length > 0 && React.createElement("span", { className: "px-1.5 rounded-full text-[10px] bg-red-600 text-white" }, pendingRequests.length),
+          subs.length > 0 && React.createElement(open ? ChevronDown : ChevronRight, { className: "w-3.5 h-3.5 text-slate-500" })),
+        open && React.createElement("div", { className: "ml-4 mt-1 mb-1.5 pl-2.5 border-l border-slate-800 space-y-1" },
+          subs.map((x) => React.createElement("button", { key: x.id, onClick: () => { setMainSection(id); x.go(); setNavOpenMobile(false); }, className: `w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium transition ${x.on && active ? (isDm ? "bg-amber-500/15 text-amber-200" : "bg-emerald-500/15 text-emerald-200") : "text-slate-400 hover:text-slate-200 hover:bg-slate-900"}` }, x.label))));
+    }),
+    isDm && React.createElement("button", { onClick: () => { setMainSection("__settings"); setOpenNav(null); setNavOpenMobile(false); }, className: navBtn(sec === "__settings") + " mt-3" },
+      React.createElement(Settings, { className: "w-4 h-4 shrink-0 text-amber-400" }), React.createElement("span", null, "Allgemeine Einstellungen")));
 
   return React.createElement("div", { className: "min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-amber-500/30" },
     toast && React.createElement("div", { className: `fixed bottom-5 right-5 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-2xl border backdrop-blur-md ${toast.type === "error" ? "bg-red-950/90 border-red-600 text-red-100" : "bg-emerald-950/90 border-emerald-500 text-emerald-100"}` },
@@ -4057,52 +4190,25 @@ function App() {
           isDm && pendingRequests.length > 0 && React.createElement("button", { onClick: () => setShowApprovalModal(true), className: "px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs text-white font-bold flex items-center gap-1.5 animate-pulse" },
             React.createElement(Bell, { className: "w-3.5 h-3.5" }), ` Anfragen (${pendingRequests.length})`
           ),
+          React.createElement("button", { onClick: () => setNavOpenMobile((v) => !v), className: "md:hidden px-3 py-1.5 rounded-xl bg-slate-800 border border-slate-700 text-xs font-semibold text-slate-300 flex items-center gap-1.5" }, React.createElement(Menu, { className: "w-3.5 h-3.5" }), " Menü"),
           React.createElement("button", { onClick: handleLogoutAll, className: "px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-red-950 border border-slate-700 text-xs font-semibold text-slate-300 flex items-center gap-1.5 transition" },
             React.createElement(LogOut, { className: "w-3.5 h-3.5" }), " Abmelden"
           )
         )
       ),
 
-      // Haupt-Navigationsleiste für alle Kampagnen-Reiter
-      React.createElement("div", { className: "border-t border-slate-800/80 bg-slate-950/80" },
-        React.createElement("div", { className: "max-w-7xl mx-auto px-4 py-2 flex items-center justify-between gap-2 overflow-x-auto" },
-          React.createElement("div", { className: "flex items-center gap-1.5" },
-            CAMPAIGN_TABS.map(({ id, label, Icon }) => {
-              const active = mainSection === id;
-              return React.createElement(
-                "button",
-                {
-                  key: id,
-                  onClick: () => setMainSection(id),
-                  className: `px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition flex items-center gap-1.5 border ${active ? (isDm ? "bg-amber-500/20 border-amber-500 text-amber-200 shadow-sm" : "bg-emerald-500/20 border-emerald-500 text-emerald-200 shadow-sm") : "bg-slate-900/60 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700"}`
-                },
-                React.createElement(Icon, { className: `w-3.5 h-3.5 ${active ? (isDm ? "text-amber-400" : "text-emerald-400") : "text-slate-500"}` }),
-                React.createElement("span", null, label),
-                id === "finances" && isDm && pendingRequests.length > 0 && React.createElement("span", { className: "ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-red-600 text-white" }, pendingRequests.length)
-              );
-            })
-          ),
-          isDm && React.createElement(
-            "button",
-            {
-              onClick: () => setMainSection("__settings"),
-              className: `px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition flex items-center gap-1.5 border ${mainSection === "__settings" ? "bg-amber-500/25 border-amber-400 text-amber-200 shadow-sm" : "bg-slate-900 border-slate-700 text-slate-300 hover:text-white hover:border-amber-500/50"}`
-            },
-            React.createElement(Settings, { className: `w-3.5 h-3.5 ${mainSection === "__settings" ? "text-amber-300" : "text-slate-400"}` }),
-            React.createElement("span", null, "Allgemeine Einstellungen")
-          )
-        )
-      )
     ),
 
-    React.createElement("main", { className: "max-w-7xl mx-auto px-4 py-6" },
+    React.createElement("div", { className: "flex flex-col md:flex-row max-w-[1800px] mx-auto" },
+      sidebar,
+      React.createElement("main", { className: "flex-1 min-w-0 px-4 py-6" },
       weekBanner,
       // A) DM Allgemeine Einstellungen
-      isDm && mainSection === "__settings" ? renderDmGeneralSettings() :
+      sec === "__settings" ? renderDmGeneralSettings() :
       // B) Modul 1: Inventar, Traglast & Attunement (Spieler & DM)
-      mainSection === "inventory" ? (isDm ? renderDmInventoryModule() : renderPlayerInventoryModule()) :
+      sec === "inventory" ? (isDm ? renderDmInventoryModule() : renderPlayerInventoryModule()) :
       // C) Die übrigen Kampagnen-Reiter (Bastion, Fraktionen, Quests, Lexikon, Downtime)
-      mainSection !== "finances" ? renderModule(mainSection) :
+      sec !== "finances" ? renderModule(sec) :
       // D) Reiter "Finanzen & Shops" – SPIELER-MODUS
       !isDm ? React.createElement("div", { className: "space-y-6" },
         React.createElement("div", { className: "bg-slate-900/80 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4" },
@@ -4226,6 +4332,7 @@ function App() {
           )
         ),
         dmFinancePanel
+      )
       )
     )
   );
